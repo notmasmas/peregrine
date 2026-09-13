@@ -1,7 +1,3 @@
-from acompanhante import Acompanhante
-from grupo import Grupo
- 
- 
 class Viajante:
     def __init__(
         self,
