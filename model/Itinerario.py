@@ -2,7 +2,8 @@
 
 from datetime import date
 
-from model import Grupo, Reserva
+from Grupo import Grupo
+from Reserva import Reserva
 
 
 class Itinerario:
@@ -10,7 +11,7 @@ class Itinerario:
             id: int,
             grupo: Grupo,
             programacao: dict = {},
-            reservas: list = [Reserva],
+            reservas: list[Reserva] = [],
             data_inicial: date = None,
             valor_total: float = 0.0
     ):
