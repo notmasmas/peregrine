@@ -13,6 +13,7 @@ class Grupo:
         integrantes: list[Viajante] = None,
         acompanhantes: list[Acompanhante] = None,
         itinerario: Itinerario = None,
+        sugestoes: dict = {}
     ):
         self._id = id
         self._nome = nome
@@ -20,3 +21,4 @@ class Grupo:
         self._integrantes = integrantes if integrantes is not None else []
         self._acompanhantes = acompanhantes if acompanhantes is not None else []
         self._itinerario = itinerario
+        self._sugestoes = sugestoes
