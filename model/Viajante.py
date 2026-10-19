@@ -1,7 +1,15 @@
 # Implementado por Gustavo de Pinho
+# Correção da Entrega 2: Adicionado return type hint
+# Correção da Entrega 2: Consertando importação circular
 
-from model.Acompanhante import Acompanhante
-from model.Grupo import Grupo
+# Os imports atuais são utilizados apenas para type hinting
+# Então eles são importados dentro de um bloco TYPE_CHECKING para evitar problemas de importação circular.
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from model.Acompanhante import Acompanhante
+    from model.Grupo import Grupo
 
 class Viajante:
     def __init__(
@@ -13,7 +21,7 @@ class Viajante:
         acompanhantes: list[Acompanhante] = None,
         grupos_organizador: list[Grupo] = None,
         grupos_participante: list[Grupo] = None,
-    ):
+    ) -> None:
         self._id = id
         self._nome = nome
         self.__email = email
