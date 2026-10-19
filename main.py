@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from control.ViajanteController import ViajanteController
 from model.Acompanhante import Acompanhante
 from model.Cidade import Cidade
 from model.Convite import Convite
@@ -42,6 +43,10 @@ def main() -> None:
     )
     reserva = Reserva(titular=viajante, id=1, nome="Reserva teste", preco=10.0)
     relatorio = Relatorio(id=1, grupo=grupo, itinerario=itinerario)
+
+    viajante_controller = ViajanteController(viajante)
+    viajante_controller.criar_grupo()
+    print(viajante.grupos_organizador)
 
     print("Passou :)")
 

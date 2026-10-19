@@ -29,3 +29,30 @@ class Viajante:
         self._acompanhantes = acompanhantes if acompanhantes is not None else []
         self._grupos_organizador = grupos_organizador if grupos_organizador is not None else []
         self._grupos_participante = grupos_participante if grupos_participante is not None else []
+
+    @property
+    def id(self):
+        return self._id
+
+    @property
+    def nome(self):
+        return self._nome
+
+    @property
+    def email(self):
+        return self.__email
+
+    @property
+    def acompanhantes(self):
+        return self._acompanhantes
+
+    @property
+    def grupos_organizador(self):
+        return self._grupos_organizador
+
+    @property
+    def grupos_participante(self):
+        return self._grupos_participante
+
+
+
