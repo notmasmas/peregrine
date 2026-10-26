@@ -1,7 +1,7 @@
-from view.View import View
+from src.view.View import View
 
 
-class ViajanteView(View):
+class GrupoView(View):
 
     def cria_grupo(self) -> dict:
         valores_input = {"nome": input("Nome do grupo: "), "participantes": []}

@@ -6,10 +6,10 @@
 # Então eles são importados dentro de um bloco TYPE_CHECKING para evitar problemas de importação circular.
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from model.StatusConvite import StatusConvite
+from src.model.StatusConvite import StatusConvite
 
 if TYPE_CHECKING:
-    from model.Viajante import Viajante
+    from src.model.Viajante import Viajante
 
 class Convite:
     def __init__(

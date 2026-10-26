@@ -1,54 +1,43 @@
-# inicializando o repositório no Git e Github
+from uuid import uuid4
 
-from datetime import date
+from src.DAOs.GrupoDAO import GrupoDAO
+from src.DAOs.ViajanteDAO import ViajanteDAO
+from src.control.GrupoController import GrupoController
+from src.model.Viajante import Viajante
+from src.view.GrupoView import GrupoView
 
-from control.ViajanteController import ViajanteController
-from model.Acompanhante import Acompanhante
-from model.Cidade import Cidade
-from model.Convite import Convite
-from model.Grupo import Grupo
-from model.Itinerario import Itinerario
-from model.PasseioTuristico import PasseioTuristico
-from model.Relatorio import Relatorio
-from model.Reserva import Reserva
-from model.StatusConvite import StatusConvite
-from model.Viajante import Viajante
 
-# Implementado por Maria Helena Melo
-# Teste de criação de objetos das classes do modelo
+def initialize_database() -> None:
+    from src.database import Base, engine
+    import src.persistence.models
+
+    Base.metadata.create_all(engine)
+
+
 def main() -> None:
-    viajante = Viajante(id=1, nome="Teste", email="teste@teste.com")
-    acompanhante = Acompanhante(id=1, nome="Acompanhante teste", viajante_vinculado=viajante)
-    grupo = Grupo(
-        id=1,
-        nome="Grupo teste",
-        organizador=viajante,
-        integrantes=[viajante],
-        acompanhantes=[acompanhante],
-    )
-    itinerario = Itinerario(id=1, grupo=grupo)
-    cidade = Cidade(id=1, nome="Cidade teste")
-    passeio = PasseioTuristico(
-        id=1,
-        nome="Passeio teste",
-        cidade=cidade,
-        preco=10.0,
-        data=date.today(),
-    )
-    convite = Convite(
-        destinatario=viajante,
-        remetente=viajante,
-        id=1,
-        status=StatusConvite.PENDENTE,
-    )
-    reserva = Reserva(titular=viajante, id=1, nome="Reserva teste", preco=10.0)
-    relatorio = Relatorio(id=1, grupo=grupo, itinerario=itinerario)
+    initialize_database()
 
-    viajante_controller = ViajanteController(viajante)
-    viajante_controller.criar_grupo()
-    print(viajante.grupos_organizador)
+    # isso aqui depois vai ser substituído pelo controlador de viajante
+    viajante = Viajante(
+        nome="Viajante de teste",
+        idade=30,
+        email=f"viajante{uuid4().hex[:8]}@gmail.com", # isso aqui é pra não dar conflito de e-mail repetido já que e-mail é UNIQUE no BD
+        senha="senha-apenas-para-teste",
+    )
+    ViajanteDAO().criar(viajante)
 
-    print("Passou :)")
+    controller = GrupoController(viajante)
+    controller.criar_grupo()
+
+    grupo = viajante.grupos_organizador[-1]
+    grupo_salvo = GrupoDAO().buscar_por_id(grupo.id)
+    if grupo_salvo is None or grupo_salvo.organizador_id != viajante.id:
+        raise RuntimeError("O grupo não foi persistido corretamente.")
+
+    print(
+        "Persistência verificada: "
+        f"viajante id={viajante.id}, grupo id={grupo.id}"
+    )
 
 if __name__ == "__main__":
     main()
