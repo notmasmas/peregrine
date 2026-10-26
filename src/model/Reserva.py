@@ -1,4 +1,4 @@
-# Implementado por Maria Helena Melo
+# Implementado por Sarah Meireles
 # Correção da Entrega 2: Adicionado return type hint
 # Correção da Entrega 2: Consertando importação circular
 
@@ -7,21 +7,18 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-from datetime import date
-
 if TYPE_CHECKING:
-    from model.Cidade import Cidade
+    from src.model.Viajante import Viajante
 
-class PasseioTuristico:
-    def __init__(self,
-            id: int,
-            nome: str,
-            cidade: Cidade,
-            preco: float,
-            data: date
+class Reserva:
+    def __init__(
+        self,
+        titular: Viajante,
+        id: int | None = None,
+        nome: str = "",
+        preco: float = 0.0,
     ) -> None:
         self._id = id
         self._nome = nome
-        self._cidade = cidade
         self._preco = preco
-        self._data = data
+        self._titular = titular

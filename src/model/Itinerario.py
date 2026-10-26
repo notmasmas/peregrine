@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 from datetime import date
 
 if TYPE_CHECKING:
-    from model.Grupo import Grupo
-    from model.Reserva import Reserva
+    from src.model.Grupo import Grupo
+    from src.model.Reserva import Reserva
 
 
 class Itinerario:

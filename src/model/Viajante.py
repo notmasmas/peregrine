@@ -8,14 +8,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from model.Acompanhante import Acompanhante
-    from model.Grupo import Grupo
+    from src.model.Acompanhante import Acompanhante
+    from src.model.Grupo import Grupo
 
 class Viajante:
     def __init__(
         self,
         id: int = None,
         nome: str = "",
+        idade: int = None,
         email: str = "",
         senha: str = "",
         acompanhantes: list[Acompanhante] = None,
@@ -24,6 +25,7 @@ class Viajante:
     ) -> None:
         self._id = id
         self._nome = nome
+        self._idade = idade
         self.__email = email
         self.__senha = senha
         self._acompanhantes = acompanhantes if acompanhantes is not None else []
@@ -34,13 +36,25 @@ class Viajante:
     def id(self):
         return self._id
 
+    @id.setter
+    def id(self, value):
+        self._id = value
+
     @property
     def nome(self):
         return self._nome
 
     @property
+    def idade(self):
+        return self._idade
+
+    @property
     def email(self):
         return self.__email
+
+    @property
+    def senha(self):
+        return self.__senha
 
     @property
     def acompanhantes(self):
@@ -53,6 +67,5 @@ class Viajante:
     @property
     def grupos_participante(self):
         return self._grupos_participante
-
 
 

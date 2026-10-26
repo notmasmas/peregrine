@@ -8,9 +8,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from model.Acompanhante import Acompanhante
-    from model.Itinerario import Itinerario
-    from model.Viajante import Viajante
+    from src.model.Acompanhante import Acompanhante
+    from src.model.Itinerario import Itinerario
+    from src.model.Viajante import Viajante
 
 class Grupo:
     def __init__(
@@ -30,3 +30,35 @@ class Grupo:
         self._acompanhantes = acompanhantes if acompanhantes is not None else []
         self._itinerario = itinerario
         self._sugestoes = sugestoes
+
+    @property
+    def id(self) -> int | None:
+        return self._id
+
+    @id.setter
+    def id(self, value: int | None) -> None:
+        self._id = value
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    @property
+    def organizador(self) -> Viajante | None:
+        return self._organizador
+
+    @property
+    def integrantes(self) -> list[Viajante]:
+        return self._integrantes
+
+    @property
+    def acompanhantes(self) -> list[Acompanhante]:
+        return self._acompanhantes
+
+    @property
+    def itinerario(self) -> Itinerario | None:
+        return self._itinerario
+
+    @property
+    def sugestoes(self) -> dict:
+        return self._sugestoes

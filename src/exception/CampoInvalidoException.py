@@ -1,4 +1,4 @@
-from view.View import View
+from src.view.View import View
 
 
 class CampoInvalidoException(Exception):
