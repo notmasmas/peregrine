@@ -26,7 +26,7 @@ class ViajanteRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     nome: Mapped[str] = mapped_column(String(150), nullable=False)
-    idade: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    data_nascimento: Mapped[date | None] = mapped_column(Date, nullable=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
     senha: Mapped[str] = mapped_column(String(150), nullable=False)
 

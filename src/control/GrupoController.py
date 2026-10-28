@@ -61,7 +61,7 @@ class GrupoController:
         return Viajante(
             id=registro.id,
             nome=registro.nome,
-            idade=registro.idade,
+            data_nascimento=registro.data_nascimento,
             email=registro.email,
             senha=registro.senha,
         )

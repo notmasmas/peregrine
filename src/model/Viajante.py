@@ -6,6 +6,7 @@
 # Então eles são importados dentro de um bloco TYPE_CHECKING para evitar problemas de importação circular.
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from datetime import date
 
 if TYPE_CHECKING:
     from src.model.Acompanhante import Acompanhante
@@ -16,7 +17,7 @@ class Viajante:
         self,
         id: int = None,
         nome: str = "",
-        idade: int = None,
+        data_nascimento: date = None,
         email: str = "",
         senha: str = "",
         acompanhantes: list[Acompanhante] = None,
@@ -25,7 +26,7 @@ class Viajante:
     ) -> None:
         self._id = id
         self._nome = nome
-        self._idade = idade
+        self._data_nascimento = data_nascimento
         self.__email = email
         self.__senha = senha
         self._acompanhantes = acompanhantes if acompanhantes is not None else []
@@ -45,8 +46,8 @@ class Viajante:
         return self._nome
 
     @property
-    def idade(self):
-        return self._idade
+    def data_nascimento(self):
+        return self._data_nascimento
 
     @property
     def email(self):
