@@ -57,7 +57,7 @@ class GrupoController:
                     "Não foi possível adicionar: " + "; ".join(nao_adicionados)
                 )
 
-    # UC06: Convidar, editar e excluir viajantes (Implementado por Gustavo de Pinho)
+    # UC06: Convidar, visualizar e excluir viajantes (Implementado por Gustavo de Pinho)
 
     def _para_viajante(self, registro) -> Viajante:
         return Viajante(

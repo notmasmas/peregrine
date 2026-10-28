@@ -1,3 +1,5 @@
+# Entrega 3: Implementado por Sarah Meireles
+
 from src.view.View import View
 
 
