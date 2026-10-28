@@ -5,6 +5,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
 
+# Implementado por Maria Helena Melo
+# Isso aqui é uma base do nosso BD, depois a gente vai melhorar a organização dessa parte de persistência
 
 grupos_participantes = Table(
     "grupos_participantes",
@@ -20,13 +22,12 @@ grupos_acompanhantes = Table(
     Column("acompanhante_id", ForeignKey("acompanhantes.id"), primary_key=True),
 )
 
-
 class ViajanteRecord(Base):
     __tablename__ = "viajantes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     nome: Mapped[str] = mapped_column(String(150), nullable=False)
-    idade: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    data_nascimento: Mapped[date | None] = mapped_column(Date, nullable=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
     senha: Mapped[str] = mapped_column(String(150), nullable=False)
 
