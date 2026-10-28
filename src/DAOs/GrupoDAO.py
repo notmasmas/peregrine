@@ -4,6 +4,7 @@ from src.database import SessionLocal
 from src.model.Grupo import Grupo
 from src.persistence.models import GrupoRecord, ViajanteRecord
 
+# Implementado por Maria Helena Melo
 
 class GrupoDAO:
     def criar(self, grupo: Grupo) -> GrupoRecord:

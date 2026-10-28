@@ -11,6 +11,8 @@ class ViajanteController:
     def __init__(self) -> None:
         self._viajante_dao = ViajanteDAO()
         self._tela = ViajanteView()
+
+    # UC01: Cadastrar viajante (Implementado por Sarah Meireles)
     
     def _validar_data_nascimento(self, data: str) -> date:
         try:

@@ -15,6 +15,8 @@ class GrupoController:
         self._grupo_dao = GrupoDAO()
         self._tela = GrupoView()
 
+    # UC03: Criar grupo de viagem (Implementado por Maria Helena Melo)
+    
     def criar_grupo(self) -> None:
         dados = self._tela.cria_grupo()
 
@@ -55,7 +57,7 @@ class GrupoController:
                     "Não foi possível adicionar: " + "; ".join(nao_adicionados)
                 )
 
-    # ---------- NOVOS MÉTODOS ----------
+    # UC06: Convidar, editar e excluir viajantes (Implementado por Gustavo de Pinho)
 
     def _para_viajante(self, registro) -> Viajante:
         return Viajante(

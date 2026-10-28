@@ -4,6 +4,7 @@ from src.database import SessionLocal
 from src.model.Viajante import Viajante
 from src.persistence.models import ViajanteRecord
 
+# Implementado por Maria Helena Melo
 
 class ViajanteDAO:
     def criar(self, viajante: Viajante) -> ViajanteRecord:
