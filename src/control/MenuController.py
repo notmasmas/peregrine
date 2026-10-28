@@ -6,7 +6,6 @@ from src.view.MenuView import MenuView
 class MenuController:
 
     def __init__(self, viajante: Viajante) -> None:
-        self._viajante = viajante
         self._grupo_controller = GrupoController(viajante)
         self._tela = MenuView()
 
