@@ -1,3 +1,5 @@
+# UC01: Cadastrar viajante (Implementado por Sarah Meireles)
+
 from src.view.View import View
 
 from getpass import getpass

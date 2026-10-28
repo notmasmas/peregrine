@@ -1,3 +1,5 @@
+# Entrega 3: Implementado por Sarah Meireles
+
 from src.control.MenuController import MenuController
 from src.control.ViajanteController import ViajanteController
 from src.view.InicioView import InicioView

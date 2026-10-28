@@ -1,3 +1,5 @@
+# Entrega 3: Implementado por Sarah Meireles
+
 import bcrypt
 
 def hash_senha(senha: str) -> str:
