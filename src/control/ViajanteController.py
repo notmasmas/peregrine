@@ -14,45 +14,55 @@ class ViajanteController:
 
     # UC01: Cadastrar viajante (Implementado por Sarah Meireles)
     
+    def _validar_nome(self, nome: str) -> None:
+        if len(nome) == 0 or len(nome) > 50:
+            raise CampoInvalidoException("Nome de usuário inválido")
+        
+    def _validar_email(self, email: str) -> None:
+        try:
+            validate_email(email, check_deliverability=False)
+        except EmailNotValidError:
+            raise CampoInvalidoException("E-mail inválido ou já cadastrado")
+        
+    def _validar_senha(self, senha: str) -> None:
+        if len(senha) < 8:
+            raise CampoInvalidoException("A senha deve ter no mínimo 8 caracteres")
+        
+    def _validar_confirmar_senha(self, senha: str, confirmar_senha: str) -> None:
+        if senha != confirmar_senha:
+            raise CampoInvalidoException("As senhas não coincidem")
+        
     def _validar_data_nascimento(self, data: str) -> date:
         try:
             nascimento = datetime.strptime(data, "%d/%m/%Y").date()
         except ValueError:
             raise CampoInvalidoException("O usuário deve ter 18 anos ou mais")
         
+        hoje = date.today()   
+        idade = hoje.year - nascimento.year - (
+            (hoje.month, hoje.day) < (nascimento.month, nascimento.day)
+        )
+        if idade < 18:
+            raise CampoInvalidoException("O usuário deve ter 18 anos ou mais")
+
         return nascimento
     
     def cadastrar_viajante(self) -> None:
         dados = self._tela.cria_viajante()
         
         try:
-            if len(dados["nome"]) == 0 or len(dados["nome"]) > 50:
-                raise CampoInvalidoException("Nome de usuário inválido")
+            self._validar_nome(dados["nome"])
             
-            try:
-                validate_email(dados["email"], check_deliverability=False)
-            except EmailNotValidError:
-                raise CampoInvalidoException("E-mail inválido ou já cadastrado")
+            self._validar_email(dados["email"])
             
             if self._viajante_dao.buscar_por_email(dados["email"]) is not None:
                 raise CampoInvalidoException("E-mail inválido ou já cadastrado")
             
-            if len(dados["senha"]) < 8:
-                raise CampoInvalidoException("A senha deve ter no mínimo 8 caracteres")
-
-            if dados["senha"] != dados["confirmar_senha"]:
-                raise CampoInvalidoException("As senhas não coincidem")
+            self._validar_senha(dados["senha"])
+            
+            self._validar_confirmar_senha(dados["senha"], dados["confirmar_senha"])
             
             nascimento = self._validar_data_nascimento(dados["data_nascimento"])
-            hoje = date.today()
-            
-            # diferença entre os anos menos 1 se a pessoa ainda não fez aniversário
-            # ou menos 0 se já fez
-            idade = hoje.year - nascimento.year - (
-                (hoje.month, hoje.day) < (nascimento.month, nascimento.day)
-            )
-            if idade < 18:
-                raise CampoInvalidoException("O usuário deve ter 18 anos ou mais")
             
             senha_criptografada = hash_senha(dados["senha"])
 
