@@ -4,6 +4,7 @@ from src.model.Grupo import Grupo
 from src.model.Viajante import Viajante
 from src.view.GrupoView import GrupoView
 from email_validator import validate_email, EmailNotValidError
+from src.util.email import enviar_email
 
 class GrupoController:
 
@@ -77,6 +78,7 @@ class GrupoController:
         for email in emails:
             try:
                 registro = self._grupo_dao.adicionar_integrante(grupo.id, email)
+                enviar_email(self._organizador.nome, grupo.nome, email)
             except ValueError as e:
                 nao_adicionados.append(f"{email} ({e})")
                 continue
@@ -119,6 +121,7 @@ class GrupoController:
             else:
                 self._tela.mostra_mensagem("Opção inválida.")
 
+    # Isso aqui provavelmente vai ser alterado depois, não? Porque ele tá adicionando o viajante direto no grupo, quand ele só deveria convidar. O viajante que escolhe entrar
     def adicionar_integrante(self, grupo: Grupo) -> bool:
         """Retorna True se o viajante foi adicionado; False se o fluxo voltou para a tela do grupo."""
         if not self._eh_organizador(grupo):
@@ -139,6 +142,7 @@ class GrupoController:
 
         try:
             registro = self._grupo_dao.adicionar_integrante(grupo.id, email)
+            enviar_email(self._organizador.nome, grupo.nome, email)
         except ValueError as e:
             self._tela.mostra_mensagem(str(e))
             return False

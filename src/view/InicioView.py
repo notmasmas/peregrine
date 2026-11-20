@@ -10,11 +10,13 @@ class InicioView(tk.Frame):
         master: tk.Misc,
         ao_entrar: Callable[[dict[str, str]], None],
         ao_cadastrar: Callable[[dict[str, str]], None],
+        ao_abrir_menu_terminal: Callable[[], None],
         ao_sair: Callable[[], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
         self._ao_entrar = ao_entrar
         self._ao_cadastrar = ao_cadastrar
+        self._ao_abrir_menu_terminal = ao_abrir_menu_terminal
         self._ao_sair = ao_sair
         self.pack(fill=tk.BOTH, expand=True)
 
@@ -104,9 +106,14 @@ class InicioView(tk.Frame):
         self._mensagem_sessao.pack(pady=(32, 16))
         tk.Label(
             tela,
-            text="A próxima etapa é conectar esta tela ao menu de grupos.",
+            text="O menu de grupos ainda é executado no terminal.",
             wraplength=320,
         ).pack(pady=(0, 16))
+        tk.Button(
+            tela,
+            text="Abrir menu de grupos no terminal",
+            command=self._ao_abrir_menu_terminal,
+        ).pack(fill=tk.X, pady=(0, 8))
         tk.Button(tela, text="Voltar ao início", command=self.mostrar_inicio).pack(
             fill=tk.X
         )
