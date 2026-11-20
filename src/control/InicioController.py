@@ -1,46 +1,32 @@
-# Entrega 3: Implementado por Sarah Meireles
-
-from src.control.MenuController import MenuController
+import tkinter as tk
 from src.control.ViajanteController import ViajanteController
 from src.view.InicioView import InicioView
-from src.DAOs.ViajanteDAO import ViajanteDAO
-from src.model.Viajante import Viajante
 
 
 class InicioController:
-
-    def __init__(self) -> None:
-        self._viajante_dao = ViajanteDAO()
+    def __init__(self, root: tk.Tk) -> None:
         self._viajante_controller = ViajanteController()
-        self._tela = InicioView()
+        self._tela = InicioView(
+            root,
+            ao_entrar=self._entrar,
+            ao_cadastrar=self._cadastrar,
+            ao_sair=root.destroy,
+        )
 
-    def iniciar(self) -> None:
-        while True:
-            opcao = self._tela.exibe_menu_inicial()
+    def _entrar(self, credenciais: dict[str, str]) -> None:
+        viajante = self._viajante_controller.validar_credenciais(credenciais)
 
-            if opcao == "1":
-                self._viajante_controller.cadastrar_viajante()
-            elif opcao == "2":
-                self._entrar()
-            elif opcao == "0":
-                return
-            else:
-                self._tela.mostra_mensagem("Opção inválida.")
-    
-    def _entrar(self) -> None:
-        # login provisório, caso de uso ainda não implementado, está apenas para testar o fluxo do sistema
-        email = self._tela.solicita_email_login()
-        registro = self._viajante_dao.buscar_por_email(email)
-
-        if registro is None:
-            self._tela.mostra_mensagem("Nenhum viajante cadastrado com esse e-mail.")
+        if viajante is None:
+            self._tela.mostrar_erro("Credenciais inválidas.")
             return
 
-        viajante = Viajante(
-            id=registro.id,
-            nome=registro.nome,
-            data_nascimento=registro.data_nascimento,
-            email=registro.email,
-            senha=registro.senha,
-        )
-        MenuController(viajante).iniciar()
+        self._tela.mostrar_sessao(viajante.nome)
+
+    def _cadastrar(self, dados: dict[str, str]) -> None:
+        erro = self._viajante_controller.cadastrar_viajante(dados)
+        if erro is not None:
+            self._tela.mostrar_erro(erro)
+            return
+
+        self._tela.mostrar_sucesso("Cadastro realizado com sucesso.")
+        self._tela.mostrar_login()

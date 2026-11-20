@@ -1,3 +1,4 @@
+import tkinter as tk
 from src.control.InicioController import InicioController
 
 
@@ -9,7 +10,12 @@ def initialize_database() -> None:
 
 def main() -> None:
     initialize_database()
-    InicioController().iniciar()
+    root = tk.Tk()
+    root.title("Peregrine")
+    root.geometry("420x480")
+    root.minsize(360, 420)
+    InicioController(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":
