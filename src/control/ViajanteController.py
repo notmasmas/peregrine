@@ -1,16 +1,16 @@
 from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.DAOs.ViajanteDAO import ViajanteDAO
 from src.model.Viajante import Viajante
-from src.view.ViajanteView import ViajanteView
 from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, date
 from src.util.seguranca import *
+from typing import Optional
+
 
 class ViajanteController:
 
     def __init__(self) -> None:
         self._viajante_dao = ViajanteDAO()
-        self._tela = ViajanteView()
 
     # UC01: Cadastrar viajante (Implementado por Sarah Meireles)
     
@@ -47,9 +47,7 @@ class ViajanteController:
 
         return nascimento
     
-    def cadastrar_viajante(self) -> None:
-        dados = self._tela.cria_viajante()
-        
+    def cadastrar_viajante(self, dados: dict[str, str]) -> Optional[str]:
         try:
             self._validar_nome(dados["nome"])
             
@@ -75,7 +73,34 @@ class ViajanteController:
             self._viajante_dao.criar(viajante)
 
         except CampoInvalidoException as e:
-            self._tela.mostra_mensagem(str(e))
-        
-        else:
-            self._tela.mostra_mensagem("Cadastro realizado com sucesso")
+            return str(e)
+
+        return None
+
+    def validar_credenciais(
+        self, credenciais: dict[str, str]
+    ) -> Optional[Viajante]:
+
+        registro = self._viajante_dao.buscar_por_email(credenciais["email"])
+
+        if registro is None:
+            return None
+
+        if registro.email is None or registro.senha is None:
+            return None
+
+        if verifica_senha(credenciais["senha"], registro.senha):
+            return Viajante(
+                id=registro.id,
+                nome=registro.nome,
+                data_nascimento=registro.data_nascimento,
+                email=registro.email,
+                senha=registro.senha,
+            )
+
+        return None
+
+    def viajante_existe(self, viajante: Viajante) -> bool:
+        viajante = self._viajante_dao.buscar_por_id(viajante.id)
+
+        return True if viajante else False
