@@ -26,7 +26,7 @@ class MenuController:
             ao_criar_grupo=self._criar_grupo,
             ao_selecionar_grupo_para_gerenciar=self._abrir_grupos,
             ao_abrir_acompanhante=self._abrir_acompanhante,
-            ao_sair=self._voltar_inicio,
+            ao_sair=self._sair_do_menu,
         )
 
     def _abrir_acompanhante(self) -> None:
@@ -36,14 +36,18 @@ class MenuController:
             return
 
         self._acompanhante_controller = AcompanhanteController(
-            self._root, viajante, ao_sair=self._voltar_inicio
+            self._root, viajante, ao_sair=self._voltar_ao_menu
         )
         self._tela.pack_forget()
 
-    def _voltar_inicio(self) -> None:
+    def _voltar_ao_menu(self) -> None:
         self._acompanhante_controller = None
         self._tela.pack(fill=tk.BOTH, expand=True)
         self._tela.mostrar_inicio()
+
+    def _sair_do_menu(self) -> None:
+        self._tela.destroy()
+        self._ao_sair()
 
     def _criar_grupo(self, nome: str, participantes: list[str]) -> bool:
         return self._grupo_controller.criar_grupo(
