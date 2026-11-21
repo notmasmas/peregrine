@@ -6,7 +6,7 @@ from email.message import EmailMessage
 
 load_dotenv()
 
-habilitar_email = True # Manter desativado no desenvolvimento. Se for ativar, preencher variáveis necessárias no .env (SENDER_EMAIL e SENDER_CREDENTIAL)
+habilitar_email = False # Manter desativado no desenvolvimento. Se for ativar, preencher variáveis necessárias no .env (SENDER_EMAIL e SENDER_CREDENTIAL)
 
 def setup_email(nome_organizador: str, nome_grupo: str, email_convidado: str):
 

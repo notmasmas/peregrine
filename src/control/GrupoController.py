@@ -4,6 +4,8 @@ from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.DAOs.GrupoDAO import GrupoDAO
 from src.model.Grupo import Grupo
 from src.model.Viajante import Viajante
+from src.model.Convite import Convite
+from src.model.StatusConvite import StatusConvite
 from src.view.GrupoView import GrupoView
 from email_validator import validate_email, EmailNotValidError
 from src.util.email import enviar_email
@@ -94,18 +96,27 @@ class GrupoController:
     def _adicionar_participantes_iniciais(
         self, grupo: Grupo, emails: list[str]
     ) -> list[str]:
-        """Adiciona cada e-mail ao grupo recém-criado e devolve os que falharam (com o motivo)."""
+        """Convida cada e-mail para o grupo recém-criado e devolve os que falharam."""
         nao_adicionados = []
 
         for email in emails:
             try:
-                registro = self._grupo_dao.adicionar_integrante(grupo.id, email)
+                registro = self._grupo_dao.criar_convite(
+                    grupo.id,
+                    email,
+                    self._organizador.id,
+                )
+                Convite(
+                    id=registro.id,
+                    destinatario=self._para_viajante(registro.destinatario),
+                    remetente=self._organizador,
+                    grupo=grupo,
+                    status=StatusConvite.PENDENTE,
+                )
                 enviar_email(self._organizador.nome, grupo.nome, email)
             except ValueError as e:
                 nao_adicionados.append(f"{email} ({e})")
                 continue
-
-            grupo.integrantes.append(self._para_viajante(registro))
 
         return nao_adicionados
 
@@ -143,9 +154,8 @@ class GrupoController:
             else:
                 self._tela.mostra_mensagem("Opção inválida.")
 
-    # Isso aqui provavelmente vai ser alterado depois, não? Porque ele tá adicionando o viajante direto no grupo, quand ele só deveria convidar. O viajante que escolhe entrar
     def adicionar_integrante(self, grupo: Grupo) -> bool:
-        """Retorna True se o viajante foi adicionado; False se o fluxo voltou para a tela do grupo."""
+        """Cria um convite pendente; o viajante só entra no grupo após aceitar."""
         if not self._eh_organizador(grupo):
             self._tela.mostra_mensagem(
                 "Apenas o organizador do grupo pode adicionar viajantes."
@@ -163,15 +173,60 @@ class GrupoController:
             return False
 
         try:
-            registro = self._grupo_dao.adicionar_integrante(grupo.id, email)
+            registro = self._grupo_dao.criar_convite(
+                grupo.id,
+                email,
+                self._organizador.id,
+            )
+            Convite(
+                id=registro.id,
+                destinatario=self._para_viajante(registro.destinatario),
+                remetente=self._organizador,
+                grupo=grupo,
+                status=StatusConvite.PENDENTE,
+            )
             enviar_email(self._organizador.nome, grupo.nome, email)
         except ValueError as e:
             self._tela.mostra_mensagem(str(e))
             return False
 
-        grupo.integrantes.append(self._para_viajante(registro))
         self._tela.mostra_mensagem("Convite enviado com sucesso")
         return True
+
+    def aceitar_convite(self, convite_id: int) -> bool:
+        """Aceita um convite como o viajante atualmente logado."""
+        try:
+            self._grupo_dao.aceitar_convite(convite_id, self._organizador.id)
+        except ValueError as e:
+            self._tela.mostra_mensagem(str(e))
+            return False
+
+        self._tela.mostra_mensagem("Convite aceito com sucesso.")
+        return True
+
+    def rejeitar_convite(self, convite_id: int) -> bool:
+        """Rejeita um convite como o viajante atualmente logado."""
+        try:
+            self._grupo_dao.rejeitar_convite(convite_id, self._organizador.id)
+        except ValueError as e:
+            self._tela.mostra_mensagem(str(e))
+            return False
+
+        self._tela.mostra_mensagem("Convite rejeitado.")
+        return True
+
+    def listar_convites_pendentes(self) -> list[dict]:
+        """Lista os convites pendentes do viajante logado com o nome do grupo."""
+        registros = self._grupo_dao.listar_convites_pendentes(
+            self._organizador.id
+        )
+        return [
+            {
+                "id": convite.id,
+                "nome_grupo": convite.grupo.nome,
+            }
+            for convite in registros
+        ]
 
     def excluir_integrante(self, grupo: Grupo, integrantes: list[dict]) -> bool:
         """Retorna True se o viajante foi excluído; False se a operação foi cancelada."""

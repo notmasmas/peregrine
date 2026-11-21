@@ -26,6 +26,9 @@ class MenuController:
             ao_criar_grupo=self._criar_grupo,
             ao_selecionar_grupo_para_gerenciar=self._abrir_grupos,
             ao_abrir_acompanhante=self._abrir_acompanhante,
+            ao_listar_convites=self._listar_convites,
+            ao_aceitar_convite=self._aceitar_convite,
+            ao_rejeitar_convite=self._rejeitar_convite,
             ao_sair=self._sair_do_menu,
         )
 
@@ -55,6 +58,15 @@ class MenuController:
             mostrar_erro=self._tela.mostrar_erro,
             mostrar_sucesso=self._tela.mostrar_sucesso,
         )
+
+    def _listar_convites(self) -> list[dict]:
+        return self._grupo_controller.listar_convites_pendentes()
+
+    def _aceitar_convite(self, convite_id: int) -> bool:
+        return self._grupo_controller.aceitar_convite(convite_id)
+
+    def _rejeitar_convite(self, convite_id: int) -> bool:
+        return self._grupo_controller.rejeitar_convite(convite_id)
 
     def _abrir_grupos(self) -> None:
         pass
