@@ -12,11 +12,27 @@ if TYPE_CHECKING:
 
 class Acompanhante:
     def __init__(
-      self, 
-      id: int, 
-      nome: str, 
-      viajante_vinculado: Viajante = None
+      self,
+      id: int | None = None,
+      nome: str = "",
+      viajante_vinculado: Viajante | None = None,
     ) -> None:
         self._id = id
         self._nome = nome
         self._viajante_vinculado = viajante_vinculado
+
+    @property
+    def id(self) -> int | None:
+        return self._id
+
+    @id.setter
+    def id(self, value: int | None) -> None:
+        self._id = value
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    @property
+    def viajante_vinculado(self) -> Viajante | None:
+        return self._viajante_vinculado

@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.DAOs.GrupoDAO import GrupoDAO
 from src.model.Grupo import Grupo
@@ -18,8 +20,26 @@ class GrupoController:
 
     # UC03: Criar grupo de viagem (Implementado por Maria Helena Melo)
     
-    def criar_grupo(self) -> None:
-        dados = self._tela.cria_grupo()
+    def criar_grupo(
+        self,
+        dados: dict | None = None,
+        *,
+        mostrar_erro: Callable[[str], None] | None = None,
+        mostrar_sucesso: Callable[[str], None] | None = None,
+    ) -> bool:
+        if dados is None:
+            dados = self._tela.cria_grupo()
+
+        ao_mostrar_erro = (
+            self._tela.mostra_mensagem
+            if mostrar_erro is None
+            else mostrar_erro
+        )
+        ao_mostrar_sucesso = (
+            self._tela.mostra_mensagem
+            if mostrar_sucesso is None
+            else mostrar_sucesso
+        )
 
         try:
             if len(dados["nome"]) == 0 or len(dados["nome"]) > 20:
@@ -38,25 +58,27 @@ class GrupoController:
             self._organizador.grupos_organizador.append(grupo)
 
         except EmailNotValidError:
-            self._tela.mostra_mensagem("Deve conter no mínimo um e-mail válido")
-            return
+            ao_mostrar_erro("Deve conter no mínimo um e-mail válido")
+            return False
 
         except ValueError as e:
-            self._tela.mostra_mensagem(str(e))
-            return
+            ao_mostrar_erro(str(e))
+            return False
 
         except CampoInvalidoException as e:
-            self._tela.mostra_mensagem(str(e))
+            ao_mostrar_erro(str(e))
+            return False
 
         else:
             nao_adicionados = self._adicionar_participantes_iniciais(
                 grupo, dados["participantes"]
             )
-            self._tela.mostra_mensagem("Grupo criado com sucesso.")
+            ao_mostrar_sucesso("Grupo criado com sucesso.")
             if nao_adicionados:
-                self._tela.mostra_mensagem(
+                ao_mostrar_erro(
                     "Não foi possível adicionar: " + "; ".join(nao_adicionados)
                 )
+            return True
 
     # UC06: Convidar, visualizar e excluir viajantes (Implementado por Gustavo de Pinho)
 

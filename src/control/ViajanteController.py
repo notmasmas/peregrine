@@ -99,3 +99,8 @@ class ViajanteController:
             )
 
         return None
+
+    def viajante_existe(self, viajante: Viajante) -> bool:
+        viajante = self._viajante_dao.buscar_por_id(viajante.id)
+
+        return True if viajante else False
