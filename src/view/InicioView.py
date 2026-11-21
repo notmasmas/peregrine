@@ -10,13 +10,13 @@ class InicioView(tk.Frame):
         master: tk.Misc,
         ao_entrar: Callable[[dict[str, str]], None],
         ao_cadastrar: Callable[[dict[str, str]], None],
-        ao_abrir_menu_terminal: Callable[[], None],
+        ao_abrir_menu: Callable[[], None],
         ao_sair: Callable[[], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
         self._ao_entrar = ao_entrar
         self._ao_cadastrar = ao_cadastrar
-        self._ao_abrir_menu_terminal = ao_abrir_menu_terminal
+        self._ao_abrir_menu = ao_abrir_menu
         self._ao_sair = ao_sair
         self.pack(fill=tk.BOTH, expand=True)
 
@@ -29,7 +29,6 @@ class InicioView(tk.Frame):
         self._criar_tela_inicial(container)
         self._criar_tela_login(container)
         self._criar_tela_cadastro(container)
-        self._criar_tela_sessao(container)
         self.mostrar_inicio()
 
     def _criar_tela(self, container: tk.Frame, nome: str) -> tk.Frame:
@@ -98,26 +97,6 @@ class InicioView(tk.Frame):
             fill=tk.X, pady=4
         )
 
-    def _criar_tela_sessao(self, container: tk.Frame) -> None:
-        tela = self._criar_tela(container, "sessao")
-        self._mensagem_sessao = tk.Label(
-            tela, font=("TkDefaultFont", 16, "bold"), wraplength=320
-        )
-        self._mensagem_sessao.pack(pady=(32, 16))
-        tk.Label(
-            tela,
-            text="O menu de grupos ainda é executado no terminal.",
-            wraplength=320,
-        ).pack(pady=(0, 16))
-        tk.Button(
-            tela,
-            text="Abrir menu de grupos no terminal",
-            command=self._ao_abrir_menu_terminal,
-        ).pack(fill=tk.X, pady=(0, 8))
-        tk.Button(tela, text="Voltar ao início", command=self.mostrar_inicio).pack(
-            fill=tk.X
-        )
-
     def _mostrar_tela(self, nome: str) -> None:
         self._telas[nome].tkraise()
 
@@ -131,10 +110,6 @@ class InicioView(tk.Frame):
     def mostrar_cadastro(self) -> None:
         self._mostrar_tela("cadastro")
         self._campos_cadastro["nome"].focus_set()
-
-    def mostrar_sessao(self, nome: str) -> None:
-        self._mensagem_sessao.config(text=f"Bem-vindo, {nome}!")
-        self._mostrar_tela("sessao")
 
     def mostrar_erro(self, mensagem: str) -> None:
         messagebox.showerror("Peregrine", mensagem, parent=self)

@@ -11,11 +11,12 @@ class InicioController:
         self._root = root
         self._viajante_controller = ViajanteController()
         self._viajante_logado: Optional[Viajante] = None
+        self._menu_controller: Optional[MenuController] = None
         self._tela = InicioView(
             root,
             ao_entrar=self._entrar,
             ao_cadastrar=self._cadastrar,
-            ao_abrir_menu_terminal=self._abrir_menu_terminal,
+            ao_abrir_menu=self._abrir_menu,
             ao_sair=root.destroy,
         )
 
@@ -27,21 +28,23 @@ class InicioController:
             return
 
         self._viajante_logado = viajante
-        self._tela.mostrar_sessao(viajante.nome)
+        self._abrir_menu()
 
-    def _abrir_menu_terminal(self) -> None:
+    def _abrir_menu(self) -> None:
         viajante = self._viajante_logado
         if viajante is None:
             self._tela.mostrar_erro("Faça login antes de abrir o menu.")
             return
 
-        self._root.withdraw()
-        try:
-            MenuController(viajante).iniciar()
-        finally:
-            self._root.deiconify()
+        self._menu_controller = MenuController(
+            self._root, viajante, ao_sair=self._voltar_inicio
+        )
+        self._tela.pack_forget()
 
-        self._tela.mostrar_sessao(viajante.nome)
+    def _voltar_inicio(self) -> None:
+        self._menu_controller = None
+        self._tela.pack(fill=tk.BOTH, expand=True)
+        self._tela.mostrar_inicio()
 
     def _cadastrar(self, dados: dict[str, str]) -> None:
         erro = self._viajante_controller.cadastrar_viajante(dados)
