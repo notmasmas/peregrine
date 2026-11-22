@@ -11,7 +11,9 @@ from src.view.MenuView import MenuView
 from src.view.GrupoDetalheView import GrupoDetalheView, ParticipanteGrupo
 from src.control.AcompanhanteController import AcompanhanteController
 from src.control.GrupoController import GrupoController
+from src.control.ItinerarioController import ItinerarioController
 from src.exception.CampoInvalidoException import CampoInvalidoException
+from src.view.ItinerarioView import ItinerarioView
 
 
 class MenuController:
@@ -26,9 +28,11 @@ class MenuController:
         self._viajante_logado: Viajante = viajante
         self._acompanhante_controller: Optional[AcompanhanteController]= None
         self._grupo_controller = GrupoController(viajante)
+        self._itinerario_controller = ItinerarioController()
         self._ao_sair = ao_sair
         self._grupos_por_id: dict[int, Grupo] = {}
         self._tela_grupo: Optional[GrupoDetalheView] = None
+        self._tela_itinerario: Optional[ItinerarioView] = None
         self._tela = MenuView(
             root,
             nome_viajante=viajante.nome,
@@ -100,9 +104,123 @@ class MenuController:
             ao_convidar_integrante=lambda email: self._convidar_integrante(grupo, email),
             ao_remover_participante=lambda item: self._remover_participante(grupo, item),
             ao_adicionar_acompanhante=lambda: self._adicionar_acompanhantes(grupo),
-            ao_abrir_itinerario=self._em_breve,
+            ao_abrir_itinerario=lambda: self._abrir_itinerario(grupo),
             ao_abrir_relatorio=self._em_breve,
+            ao_sair_do_grupo=lambda: self._sair_do_grupo(grupo),
         )
+
+    def _abrir_itinerario(self, grupo: Grupo) -> None:
+        tela_grupo = self._tela_grupo
+        if tela_grupo is None:
+            return
+        if grupo.id is None:
+            tela_grupo.mostrar_erro("Grupo não encontrado.")
+            return
+        grupo_id = grupo.id
+
+        try:
+            dias = self._itinerario_controller.listar_dias(grupo_id)
+        except ValueError as erro:
+            tela_grupo.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela_grupo.mostrar_erro("Não foi possível carregar o itinerário do grupo.")
+            return
+
+        tela_grupo.pack_forget()
+        self._tela_itinerario = ItinerarioView(
+            self._root,
+            nome_grupo=grupo.nome,
+            dias=dias,
+            ao_voltar=self._voltar_do_itinerario,
+            participantes=self._participantes_reserva(grupo),
+            pode_adicionar=(
+                grupo.organizador is not None
+                and grupo.organizador.id == self._viajante_logado.id
+            ),
+            ao_adicionar=lambda dados: self._adicionar_dia_itinerario(
+                grupo_id, dados
+            ),
+            ao_editar=lambda data_original, dados: self._editar_dia_itinerario(
+                grupo_id, data_original, dados
+            ),
+            ao_remover=lambda datas: self._remover_dias_itinerario(
+                grupo_id, datas
+            ),
+        )
+
+    @staticmethod
+    def _participantes_reserva(grupo: Grupo) -> list[tuple[int, str]]:
+        viajantes = ([grupo.organizador] if grupo.organizador is not None else [])
+        viajantes.extend(grupo.integrantes)
+        participantes: list[tuple[int, str]] = []
+        ids_adicionados: set[int] = set()
+        for viajante in viajantes:
+            if viajante.id is not None and viajante.id not in ids_adicionados:
+                participantes.append((viajante.id, viajante.nome))
+                ids_adicionados.add(viajante.id)
+        return participantes
+
+    def _adicionar_dia_itinerario(self, grupo_id: int, dados: dict) -> bool:
+        tela = self._tela_itinerario
+        if tela is None:
+            return False
+        viajante_id = self._viajante_logado.id
+        if viajante_id is None:
+            tela.mostrar_erro("Faça login antes de adicionar ao itinerário.")
+            return False
+        try:
+            self._itinerario_controller.adicionar_dia(
+                grupo_id, viajante_id, dados
+            )
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return False
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível adicionar o dia ao itinerário.")
+            return False
+        return True
+
+    def _editar_dia_itinerario(
+        self, grupo_id: int, data_original: str, dados: dict
+    ) -> bool:
+        tela = self._tela_itinerario
+        if tela is None:
+            return False
+        try:
+            self._itinerario_controller.editar_dia(
+                grupo_id, data_original, dados
+            )
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return False
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível editar o dia do itinerário.")
+            return False
+        return True
+
+    def _remover_dias_itinerario(
+        self, grupo_id: int, datas: list[str]
+    ) -> bool:
+        tela = self._tela_itinerario
+        if tela is None:
+            return False
+        try:
+            self._itinerario_controller.remover_dias(grupo_id, datas)
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return False
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível remover os dias do itinerário.")
+            return False
+        return True
+
+    def _voltar_do_itinerario(self) -> None:
+        if self._tela_itinerario is not None:
+            self._tela_itinerario.destroy()
+            self._tela_itinerario = None
+        if self._tela_grupo is not None:
+            self._tela_grupo.pack(fill=tk.BOTH, expand=True)
 
     @staticmethod
     def _itens_acompanhantes(acompanhantes: list[Acompanhante]) -> list[ParticipanteGrupo]:
@@ -155,6 +273,22 @@ class MenuController:
             return
 
         tela.atualizar_participantes(self._participantes_do_grupo(grupo))
+
+    def _sair_do_grupo(self, grupo: Grupo) -> None:
+        tela = self._tela_grupo
+        if tela is None:
+            return
+        try:
+            self._grupo_controller.sair_do_grupo(grupo)
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível sair do grupo.")
+            return
+
+        tela.mostrar_sucesso("Você saiu do grupo.")
+        self._voltar_do_grupo()
 
     def _adicionar_acompanhantes(self, grupo: Grupo) -> None:
         tela = self._tela_grupo

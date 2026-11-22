@@ -32,12 +32,14 @@ class GrupoDetalheView(tk.Frame):
         ao_adicionar_acompanhante: Callable[[], None],
         ao_abrir_itinerario: Callable[[], None],
         ao_abrir_relatorio: Callable[[], None],
+        ao_sair_do_grupo: Callable[[], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
         self._ao_renomear = ao_renomear
         self._ao_remover = ao_remover
         self._ao_convidar_integrante = ao_convidar_integrante
         self._ao_remover_participante = ao_remover_participante
+        self._ao_sair_do_grupo = ao_sair_do_grupo
         self._eh_organizador = eh_organizador
         self._participantes = participantes
         self._pagina = 0
@@ -94,6 +96,12 @@ class GrupoDetalheView(tk.Frame):
             tk.Button(
                 acoes, text="+ Adicionar acompanhante", command=ao_adicionar_acompanhante
             ).pack(side=tk.LEFT, padx=(8, 0))
+        else:
+            tk.Button(
+                self,
+                text="Sair do grupo",
+                command=self._confirmar_saida_do_grupo,
+            ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(16, 0))
 
         # Rodapé
         self.grid_rowconfigure(5, weight=1)
@@ -184,6 +192,15 @@ class GrupoDetalheView(tk.Frame):
             "Remover do grupo", mensagem, default=messagebox.NO, parent=self
         ):
             self._ao_remover_participante(participante)
+
+    def _confirmar_saida_do_grupo(self) -> None:
+        if messagebox.askyesno(
+            "Sair do grupo",
+            "Deseja sair deste grupo? Seus acompanhantes também serão removidos.",
+            default=messagebox.NO,
+            parent=self,
+        ):
+            self._ao_sair_do_grupo()
 
     def _pagina_anterior(self) -> None:
         self._pagina -= 1

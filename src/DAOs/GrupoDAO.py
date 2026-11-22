@@ -273,6 +273,30 @@ class GrupoDAO:
             grupo.integrantes.remove(viajante)
             session.commit()
             return ids_removidos
+
+    def sair_do_grupo(self, grupo_id: int, viajante_id: int) -> set[int]:
+        with SessionLocal() as session:
+            grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
+            if grupo is None:
+                raise ValueError("Grupo não encontrado.")
+            if grupo.organizador_id == viajante_id:
+                raise ValueError("O organizador não pode sair do próprio grupo.")
+
+            viajante = session.get(ViajanteRecord, viajante_id)
+            if viajante is None or viajante not in grupo.integrantes:
+                raise ValueError("Você não faz parte deste grupo.")
+
+            acompanhantes = [
+                acompanhante
+                for acompanhante in grupo.acompanhantes
+                if acompanhante.viajante_id == viajante_id
+            ]
+            ids_removidos = {acompanhante.id for acompanhante in acompanhantes}
+            for acompanhante in acompanhantes:
+                grupo.acompanhantes.remove(acompanhante)
+            grupo.integrantes.remove(viajante)
+            session.commit()
+            return ids_removidos
  
     def listar_por_organizador(self, organizador_id: int) -> list[GrupoRecord]:
         with SessionLocal() as session:

@@ -251,6 +251,24 @@ class GrupoController:
             a for a in grupo.acompanhantes if a.id not in acompanhantes_removidos
         ]
 
+    def sair_do_grupo(self, grupo: Grupo) -> None:
+        if grupo.id is None:
+            raise ValueError("Grupo não encontrado.")
+        acompanhantes_removidos = self._grupo_dao.sair_do_grupo(
+            grupo.id, self._organizador.id
+        )
+        viajante_id = self._organizador.id
+        grupo.integrantes[:] = [
+            integrante
+            for integrante in grupo.integrantes
+            if integrante.id != viajante_id
+        ]
+        grupo.acompanhantes[:] = [
+            acompanhante
+            for acompanhante in grupo.acompanhantes
+            if acompanhante.id not in acompanhantes_removidos
+        ]
+
     def remover_acompanhante(self, grupo: Grupo, acompanhante_id: int) -> None:
         self._grupo_dao.remover_acompanhante(
             grupo.id, acompanhante_id, self._organizador.id
