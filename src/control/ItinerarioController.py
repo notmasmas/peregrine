@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from src.DAOs.ItinerarioDAO import ItinerarioDAO
 
@@ -50,6 +50,10 @@ class ItinerarioController:
         self, grupo_id: int, viajante_id: int, dados: dict
     ) -> None:
         data, cidade, passeio, reservas = self._normalizar_dia(dados)
+            
+        if data < date.today():
+            raise ValueError("A data escolhida não pode ser anterior à data de hoje!")
+
         self._itinerario_dao.adicionar_dia(
             grupo_id, viajante_id, data, cidade, passeio, reservas
         )
@@ -63,6 +67,10 @@ class ItinerarioController:
             raise ValueError("A data do dia selecionado está inválida.") from erro
 
         data, cidade, passeio, reservas = self._normalizar_dia(dados)
+
+        if data < date.today():
+            raise ValueError("A data escolhida não pode ser anterior à data de hoje!")
+        
         self._itinerario_dao.editar_dia(
             grupo_id,
             data_anterior,
