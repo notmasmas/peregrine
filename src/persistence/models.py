@@ -44,6 +44,14 @@ class ViajanteRecord(Base):
     reservas: Mapped[list["ReservaRecord"]] = relationship(
         back_populates="titular"
     )
+    convites_recebidos: Mapped[list["ConviteRecord"]] = relationship(
+        foreign_keys="ConviteRecord.destinatario_id",
+        back_populates="destinatario",
+    )
+    convites_enviados: Mapped[list["ConviteRecord"]] = relationship(
+        foreign_keys="ConviteRecord.remetente_id",
+        back_populates="remetente",
+    )
 
 
 class GrupoRecord(Base):
@@ -70,7 +78,41 @@ class GrupoRecord(Base):
     )
     itinerario: Mapped["ItinerarioRecord | None"] = relationship(
         back_populates="grupo",
+        cascade="save-update, merge, delete",
         uselist=False,
+    )
+    convites: Mapped[list["ConviteRecord"]] = relationship(
+        back_populates="grupo",
+        cascade="all, delete-orphan",
+    )
+
+
+class ConviteRecord(Base):
+    __tablename__ = "convites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    grupo_id: Mapped[int] = mapped_column(
+        ForeignKey("grupos.id"),
+        nullable=False,
+    )
+    destinatario_id: Mapped[int] = mapped_column(
+        ForeignKey("viajantes.id"),
+        nullable=False,
+    )
+    remetente_id: Mapped[int] = mapped_column(
+        ForeignKey("viajantes.id"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="Pendente")
+
+    grupo: Mapped["GrupoRecord"] = relationship(back_populates="convites")
+    destinatario: Mapped["ViajanteRecord"] = relationship(
+        foreign_keys=[destinatario_id],
+        back_populates="convites_recebidos",
+    )
+    remetente: Mapped["ViajanteRecord"] = relationship(
+        foreign_keys=[remetente_id],
+        back_populates="convites_enviados",
     )
 
 

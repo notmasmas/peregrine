@@ -68,8 +68,22 @@ class GrupoView(View):
  
         if escolha == "0":
             return None
-        if not escolha.isdigit() or not 1 <= int(escolha) <= len(nomes):
+
+        try:
+            indice = int(escolha) - 1
+        except ValueError:
+            indice = -1
+
+        if not escolha.isdecimal() or not 0 <= indice < len(nomes):
             self.mostra_mensagem("Grupo inválido.")
             return None
- 
-        return int(escolha) - 1
+
+        return indice
+
+    def solicita_novo_nome(self, nome_atual: str) -> str:
+        print(f"Nome atual: {nome_atual}")
+        return input("Novo nome do grupo (1 a 20 caracteres): ").strip()
+
+    def confirma_remocao_grupo(self, nome: str) -> bool:
+        resposta = input(f'Deseja remover o grupo "{nome}"? S/N ')
+        return resposta.strip().upper() == "S"

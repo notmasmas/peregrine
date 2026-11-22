@@ -1,6 +1,6 @@
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 
 class MenuView(tk.Frame):
@@ -9,14 +9,26 @@ class MenuView(tk.Frame):
         master: tk.Misc,
         nome_viajante: str,
         ao_criar_grupo: Callable[[str, list[str]], bool],
-        ao_selecionar_grupo_para_gerenciar: Callable[[], None],
+        ao_listar_grupos: Callable[[], list[dict]],
+        ao_editar_grupo: Callable[[int, str], bool],
+        ao_remover_grupo: Callable[[int], bool],
         ao_abrir_acompanhante: Callable[[], None],
+        ao_listar_convites: Callable[[], list[dict]],
+        ao_aceitar_convite: Callable[[int], bool],
+        ao_rejeitar_convite: Callable[[int], bool],
         ao_sair: Callable[[], None],
         ao_abrir_grupo: Callable[[int], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
         self._nome_viajante = nome_viajante
         self._ao_criar_grupo = ao_criar_grupo
+        self._ao_listar_grupos = ao_listar_grupos
+        self._ao_editar_grupo = ao_editar_grupo
+        self._ao_remover_grupo = ao_remover_grupo
+        self._ao_abrir_acompanhante = ao_abrir_acompanhante
+        self._ao_listar_convites = ao_listar_convites
+        self._ao_aceitar_convite = ao_aceitar_convite
+        self._ao_rejeitar_convite = ao_rejeitar_convite
         self._ao_selecionar_grupo_para_gerenciar = (
             ao_selecionar_grupo_para_gerenciar
         )
@@ -33,6 +45,7 @@ class MenuView(tk.Frame):
         self._telas: dict[str, tk.Frame] = {}
         self._criar_tela_inicial(container)
         self._criar_tela_criacao(container)
+        self._criar_tela_convites(container)
         self.mostrar_inicio()
         self._ao_abrir_grupo = ao_abrir_grupo
 
@@ -51,9 +64,16 @@ class MenuView(tk.Frame):
         tk.Label(tela, text=f"Olá, {self._nome_viajante}!").grid(
             row=0, column=0, sticky=tk.W
         )
-        tk.Button(tela, text="Acompanhantes", command=self._ao_abrir_acompanhante).grid(
-            row=0, column=1, sticky=tk.E
-        )
+        botoes_direita = tk.Frame(tela)
+        botoes_direita.grid(row=0, column=1, sticky=tk.E, pady=(12, 0))
+        tk.Button(
+            botoes_direita, text="Acompanhantes", command=self._ao_abrir_acompanhante
+        ).pack(side=tk.RIGHT)
+        tk.Button(
+            botoes_direita,
+            text="Meus Convites",
+            command=self.mostrar_convites,
+        ).pack(side=tk.RIGHT, padx=(0, 8))
         tk.Label(
             tela,
             text="Seus grupos de viagem",
@@ -82,11 +102,14 @@ class MenuView(tk.Frame):
         tk.Button(
             botoes_esquerda, text="+ Novo", command=self.mostrar_criacao
         ).pack(side=tk.LEFT, padx=(8, 0))
+        acoes_grupo = tk.Frame(tela)
+        acoes_grupo.grid(row=3, column=1, sticky=tk.E, pady=(12, 0))
         tk.Button(
-            tela,
-            text="Gerenciar grupos",
-            command=self._ao_selecionar_grupo_para_gerenciar,
-        ).grid(row=3, column=1, sticky=tk.E, pady=(12, 0))
+            acoes_grupo, text="Editar grupo", command=self._editar_grupo_selecionado
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            acoes_grupo, text="Remover grupo", command=self._remover_grupo_selecionado
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
     def _criar_tela_criacao(self, container: tk.Frame) -> None:
         tela = self._criar_tela(container, "criar_grupo")
@@ -125,6 +148,30 @@ class MenuView(tk.Frame):
         tk.Button(tela, text="Criar", command=self._enviar_criacao).grid(
             row=5, column=0, sticky=tk.E, pady=(16, 0)
         )
+
+    def _criar_tela_convites(self, container: tk.Frame) -> None:
+        tela = self._criar_tela(container, "visualizar_convites")
+        tela.grid_columnconfigure(0, weight=1)
+        tela.grid_rowconfigure(2, weight=1)
+
+        cabecalho = tk.Frame(tela)
+        cabecalho.grid(row=0, column=0, sticky="ew")
+        cabecalho.grid_columnconfigure(1, weight=1)
+        tk.Button(
+            cabecalho, text="Voltar", command=self.mostrar_inicio
+        ).grid(row=0, column=0, sticky=tk.W)
+        tk.Label(
+            tela,
+            text="Meus convites",
+            font=("TkDefaultFont", 18, "bold"),
+        ).grid(row=1, column=0, columnspan=2, pady=(32, 12))
+
+        self._container_convites = tk.Frame(tela)
+        self._container_convites.grid(
+            row=2, column=0, sticky="nsew", pady=(24, 0)
+        )
+        self._container_convites.grid_columnconfigure(0, weight=1)
+
 
     def _adicionar_campo_email(self) -> None:
         if self._botao_adicionar_email is not None:
@@ -168,7 +215,53 @@ class MenuView(tk.Frame):
         self._telas[nome].tkraise()
 
     def mostrar_inicio(self) -> None:
+        self._atualizar_lista_grupos()
         self._mostrar_tela("inicio")
+
+    def _atualizar_lista_grupos(self) -> None:
+        self._grupos = self._ao_listar_grupos()
+        self._lista_grupos.delete(0, tk.END)
+        if not self._grupos:
+            self._lista_grupos.insert(tk.END, "Você ainda não organiza nenhum grupo.")
+            return
+
+        for grupo in self._grupos:
+            self._lista_grupos.insert(tk.END, grupo["nome"])
+
+    def _grupo_selecionado(self) -> dict | None:
+        selecao = self._lista_grupos.curselection()
+        if not self._grupos or not selecao:
+            self.mostrar_erro("Selecione um grupo para continuar.")
+            return None
+        return self._grupos[selecao[0]]
+
+    def _editar_grupo_selecionado(self) -> None:
+        grupo = self._grupo_selecionado()
+        if grupo is None:
+            return
+
+        nome = simpledialog.askstring(
+            "Editar grupo",
+            "Novo nome do grupo (1 a 20 caracteres)",
+            initialvalue=grupo["nome"],
+            parent=self,
+        )
+        if nome is not None and self._ao_editar_grupo(grupo["id"], nome.strip()):
+            self._atualizar_lista_grupos()
+
+    def _remover_grupo_selecionado(self) -> None:
+        grupo = self._grupo_selecionado()
+        if grupo is None:
+            return
+
+        confirmado = messagebox.askyesno(
+            "Remover grupo",
+            f'Deseja remover o grupo "{grupo["nome"]}"?',
+            default=messagebox.NO,
+            parent=self,
+        )
+        if confirmado and self._ao_remover_grupo(grupo["id"]):
+            self._atualizar_lista_grupos()
 
     def mostrar_criacao(self) -> None:
         self._mostrar_tela("criar_grupo")
@@ -207,6 +300,112 @@ class MenuView(tk.Frame):
             return
         
         self._ao_abrir_grupo(grupo["id"])
+
+    def mostrar_convites(self) -> None:
+        self._atualizar_lista_convites()
+        self._mostrar_tela("visualizar_convites")
+
+    def _atualizar_lista_convites(self) -> None:
+        for widget in self._container_convites.winfo_children():
+            widget.destroy()
+
+        convites = self._ao_listar_convites()
+        if not convites:
+            tk.Label(
+                self._container_convites,
+                text="Você não possui convites pendentes.",
+            ).grid(row=0, column=0, columnspan=2)
+            return
+
+        for indice, convite in enumerate(convites):
+            linha = tk.Frame(self._container_convites)
+            linha.grid(row=indice, column=0, sticky="ew", pady=4)
+            linha.grid_columnconfigure(0, weight=1)
+
+            tk.Label(
+                linha,
+                text=convite["nome_grupo"],
+                font=("TkDefaultFont", 11),
+            ).grid(row=0, column=0, sticky=tk.W)
+
+            botoes = tk.Frame(linha)
+            botoes.grid(row=0, column=1, sticky=tk.E)
+            tk.Button(
+                botoes,
+                text="Aceitar",
+                command=lambda convite_id=convite["id"]: self._responder_convite(
+                    convite_id, True
+                ),
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                botoes,
+                text="Rejeitar",
+                command=lambda convite_id=convite["id"]: self._responder_convite(
+                    convite_id, False
+                ),
+            ).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _responder_convite(self, convite_id: int, aceitar: bool) -> None:
+        sucesso = (
+            self._ao_aceitar_convite(convite_id)
+            if aceitar
+            else self._ao_rejeitar_convite(convite_id)
+        )
+        if sucesso:
+            self._atualizar_lista_convites()
+
+    def mostrar_convites(self) -> None:
+        self._atualizar_lista_convites()
+        self._mostrar_tela("visualizar_convites")
+
+    def _atualizar_lista_convites(self) -> None:
+        for widget in self._container_convites.winfo_children():
+            widget.destroy()
+
+        convites = self._ao_listar_convites()
+        if not convites:
+            tk.Label(
+                self._container_convites,
+                text="Você não possui convites pendentes.",
+            ).grid(row=0, column=0, columnspan=2)
+            return
+
+        for indice, convite in enumerate(convites):
+            linha = tk.Frame(self._container_convites)
+            linha.grid(row=indice, column=0, sticky="ew", pady=4)
+            linha.grid_columnconfigure(0, weight=1)
+
+            tk.Label(
+                linha,
+                text=convite["nome_grupo"],
+                font=("TkDefaultFont", 11),
+            ).grid(row=0, column=0, sticky=tk.W)
+
+            botoes = tk.Frame(linha)
+            botoes.grid(row=0, column=1, sticky=tk.E)
+            tk.Button(
+                botoes,
+                text="Aceitar",
+                command=lambda convite_id=convite["id"]: self._responder_convite(
+                    convite_id, True
+                ),
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                botoes,
+                text="Rejeitar",
+                command=lambda convite_id=convite["id"]: self._responder_convite(
+                    convite_id, False
+                ),
+            ).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _responder_convite(self, convite_id: int, aceitar: bool) -> None:
+        sucesso = (
+            self._ao_aceitar_convite(convite_id)
+            if aceitar
+            else self._ao_rejeitar_convite(convite_id)
+        )
+        if sucesso:
+            self._atualizar_lista_convites()
 
     def mostrar_erro(self, mensagem: str) -> None:
         messagebox.showerror("Peregrine", mensagem, parent=self)

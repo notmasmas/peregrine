@@ -7,6 +7,7 @@ from src.view.MenuView import MenuView
 from src.view.GrupoDetalheView import GrupoDetalheView
 from src.control.AcompanhanteController import AcompanhanteController
 from src.control.GrupoController import GrupoController
+from src.exception.CampoInvalidoException import CampoInvalidoException
 
 
 class MenuController:
@@ -29,7 +30,13 @@ class MenuController:
             nome_viajante=viajante.nome,
             ao_criar_grupo=self._criar_grupo,
             ao_selecionar_grupo_para_gerenciar=self._abrir_grupo,
+            ao_listar_grupos=self._listar_grupo,
+            ao_editar_grupo=self._editar_grupo,
+            ao_remover_grupo=self._remover_grupo,
             ao_abrir_acompanhante=self._abrir_acompanhante,
+            ao_listar_convites=self._listar_convites,
+            ao_aceitar_convite=self._aceitar_convite,
+            ao_rejeitar_convite=self._rejeitar_convite,
             ao_sair=self._sair_do_menu,
             ao_abrir_grupo=self._abrir_grupo,
         )
@@ -111,3 +118,38 @@ class MenuController:
             [self._resumo_grupo(g) for g in grupos["organizados"]],
             [self._resumo_grupo(g) for g in grupos["participando"]],
         )
+
+    def _listar_convites(self) -> list[dict]:
+        return self._grupo_controller.listar_convites_pendentes()
+
+    def _aceitar_convite(self, convite_id: int) -> bool:
+        return self._grupo_controller.aceitar_convite(convite_id)
+
+    def _rejeitar_convite(self, convite_id: int) -> bool:
+        return self._grupo_controller.rejeitar_convite(convite_id)
+
+    def _listar_grupos(self) -> list[dict]:
+        return [
+            {"id": grupo.id, "nome": grupo.nome}
+            for grupo in self._grupo_controller.listar_grupos_organizados()
+        ]
+
+    def _editar_grupo(self, grupo_id: int, nome: str) -> bool:
+        try:
+            self._grupo_controller.editar_grupo(grupo_id, nome)
+        except (CampoInvalidoException, ValueError) as e:
+            self._tela.mostrar_erro(str(e))
+            return False
+
+        self._tela.mostrar_sucesso("Grupo atualizado com sucesso.")
+        return True
+
+    def _remover_grupo(self, grupo_id: int) -> bool:
+        try:
+            self._grupo_controller.remover_grupo(grupo_id)
+        except ValueError as e:
+            self._tela.mostrar_erro(str(e))
+            return False
+
+        self._tela.mostrar_sucesso("Grupo removido com sucesso.")
+        return True

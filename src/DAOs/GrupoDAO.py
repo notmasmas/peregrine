@@ -1,9 +1,10 @@
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session
 
 from src.database import SessionLocal
 from src.model.Grupo import Grupo
-from src.persistence.models import GrupoRecord, ViajanteRecord
+from src.persistence.models import ConviteRecord, GrupoRecord, ViajanteRecord
 
 # Implementado por Maria Helena Melo
 
@@ -36,6 +37,28 @@ class GrupoDAO:
         with SessionLocal() as session:
             return session.get(GrupoRecord, grupo_id)
 
+    def _buscar_para_alteracao(
+        self, session: Session, grupo_id: int, organizador_id: int
+    ) -> GrupoRecord:
+        grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
+        if grupo is None:
+            raise ValueError("Grupo não encontrado.")
+        if organizador_id is None or grupo.organizador_id != organizador_id:
+            raise ValueError("Apenas o organizador pode alterar este grupo.")
+        return grupo
+
+    def atualizar_nome(self, grupo_id: int, organizador_id: int, nome: str) -> None:
+        with SessionLocal() as session:
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+            grupo.nome = nome
+            session.commit()
+
+    def remover(self, grupo_id: int, organizador_id: int) -> None:
+        with SessionLocal() as session:
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+            session.delete(grupo)
+            session.commit()
+
     def listar_integrantes(self, grupo_id: int) -> list[ViajanteRecord]:
         with SessionLocal() as session:
             grupo = session.get(GrupoRecord, grupo_id)
@@ -45,6 +68,14 @@ class GrupoDAO:
             return list(grupo.integrantes)
  
     def adicionar_integrante(self, grupo_id: int, email: str) -> ViajanteRecord:
+        return self.criar_convite(grupo_id, email).destinatario
+
+    def criar_convite(
+        self,
+        grupo_id: int,
+        email: str,
+        remetente_id: int | None = None,
+    ) -> ConviteRecord:
         with SessionLocal() as session:
             grupo = session.get(GrupoRecord, grupo_id)
             if grupo is None:
@@ -59,10 +90,90 @@ class GrupoDAO:
             if viajante.id == grupo.organizador_id or viajante in grupo.integrantes:
                 raise ValueError("Este viajante já faz parte do grupo.")
  
-            grupo.integrantes.append(viajante)
+            convite_existente = session.scalar(
+                select(ConviteRecord).where(
+                    ConviteRecord.grupo_id == grupo_id,
+                    ConviteRecord.destinatario_id == viajante.id,
+                    ConviteRecord.status == "Pendente",
+                )
+            )
+            if convite_existente is not None:
+                raise ValueError("Já existe um convite pendente para este viajante.")
+
+            remetente = session.get(ViajanteRecord, remetente_id)
+            if remetente is None:
+                remetente = session.get(ViajanteRecord, grupo.organizador_id)
+            if remetente is None:
+                raise ValueError("O remetente do convite não foi encontrado.")
+
+            convite = ConviteRecord(
+                grupo=grupo,
+                destinatario=viajante,
+                remetente=remetente,
+                status="Pendente",
+            )
+            session.add(convite)
             session.commit()
-            session.refresh(viajante)
-            return viajante
+            session.refresh(convite)
+            # Mantém os dados do destinatário disponíveis depois de fechar a sessão.
+            _ = convite.destinatario
+            session.expunge(convite)
+            return convite
+
+    def convidar_integrante(
+        self,
+        grupo_id: int,
+        email: str,
+        remetente_id: int | None = None,
+    ) -> ConviteRecord:
+        return self.criar_convite(grupo_id, email, remetente_id)
+
+    def aceitar_convite(self, convite_id: int, destinatario_id: int) -> None:
+        with SessionLocal() as session:
+            convite = session.get(ConviteRecord, convite_id)
+            if convite is None:
+                raise ValueError("Convite não encontrado.")
+            if convite.destinatario_id != destinatario_id:
+                raise ValueError("Este convite pertence a outro viajante.")
+            if convite.status != "Pendente":
+                raise ValueError("Este convite não está mais pendente.")
+
+            grupo = session.get(GrupoRecord, convite.grupo_id)
+            destinatario = session.get(ViajanteRecord, convite.destinatario_id)
+            if grupo is None or destinatario is None:
+                raise ValueError("Não foi possível aceitar o convite.")
+            if destinatario not in grupo.integrantes:
+                grupo.integrantes.append(destinatario)
+            convite.status = "Aceito"
+            session.commit()
+
+    def rejeitar_convite(self, convite_id: int, destinatario_id: int) -> None:
+        with SessionLocal() as session:
+            convite = session.get(ConviteRecord, convite_id)
+            if convite is None:
+                raise ValueError("Convite não encontrado.")
+            if convite.destinatario_id != destinatario_id:
+                raise ValueError("Este convite pertence a outro viajante.")
+            if convite.status != "Pendente":
+                raise ValueError("Este convite não está mais pendente.")
+            convite.status = "Rejeitado"
+            session.commit()
+
+    def listar_convites_pendentes(self, destinatario_id: int) -> list[ConviteRecord]:
+        with SessionLocal() as session:
+            convites = list(
+                session.scalars(
+                    select(ConviteRecord).where(
+                        ConviteRecord.destinatario_id == destinatario_id,
+                        ConviteRecord.status == "Pendente",
+                    )
+                )
+            )
+            for convite in convites:
+                _ = convite.grupo
+                _ = convite.remetente
+            session.expunge_all()
+            return convites
  
     def remover_integrante(self, grupo_id: int, viajante_id: int) -> None:
         with SessionLocal() as session:
