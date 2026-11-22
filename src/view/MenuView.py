@@ -12,15 +12,17 @@ class MenuView(tk.Frame):
         ao_selecionar_grupo_para_gerenciar: Callable[[], None],
         ao_abrir_acompanhante: Callable[[], None],
         ao_sair: Callable[[], None],
+        ao_abrir_grupo: Callable[[int], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
         self._nome_viajante = nome_viajante
         self._ao_criar_grupo = ao_criar_grupo
         self._ao_selecionar_grupo_para_gerenciar = (
             ao_selecionar_grupo_para_gerenciar
-        ),
+        )
         self._ao_abrir_acompanhante= ao_abrir_acompanhante
         self._ao_sair = ao_sair
+        self._ao_abrir_grupo = ao_abrir_grupo
         self.pack(fill=tk.BOTH, expand=True)
 
         container = tk.Frame(self)
@@ -32,6 +34,7 @@ class MenuView(tk.Frame):
         self._criar_tela_inicial(container)
         self._criar_tela_criacao(container)
         self.mostrar_inicio()
+        self._ao_abrir_grupo = ao_abrir_grupo
 
     def _criar_tela(self, container: tk.Frame, nome: str) -> tk.Frame:
         tela = tk.Frame(container)
@@ -57,9 +60,20 @@ class MenuView(tk.Frame):
             font=("TkDefaultFont", 18, "bold"),
         ).grid(row=1, column=0, columnspan=2, pady=(32, 12))
 
-        tk.Frame(tela).grid(
-            row=2, column=0, columnspan=2, sticky="nsew"
+        area_grupos = tk.Frame(tela)
+        area_grupos.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        area_grupos.grid_columnconfigure(0, weight=1)
+        area_grupos.grid_rowconfigure(0, weight=1)
+        
+        self._itens_grupos: list[dict | None] = []
+        self._lista_grupos = tk.Listbox(
+            area_grupos, exportselection=False, activestyle="none"
         )
+        self._lista_grupos.grid(row=0, column=0, sticky="nsew")
+        barra = tk.Scrollbar(area_grupos, command=self._lista_grupos.yview)
+        barra.grid(row=0, column=1, sticky="ns")
+        self._lista_grupos.config(yscrollcommand=barra.set)
+        self._lista_grupos.bind("<<ListboxSelect>>", self._ao_selecionar_item_grupo)
         botoes_esquerda = tk.Frame(tela)
         botoes_esquerda.grid(row=3, column=0, sticky=tk.W, pady=(12, 0))
         tk.Button(
@@ -159,6 +173,40 @@ class MenuView(tk.Frame):
     def mostrar_criacao(self) -> None:
         self._mostrar_tela("criar_grupo")
         self._entrada_nome_grupo.focus_set()
+         
+    def exibir_grupos(self, organizados: list[dict], participando: list[dict]) -> None:
+        self._lista_grupos.delete(0, tk.END)
+        self._itens_grupos = []
+        
+        secoes = (
+            ("Grupos que organizo", organizados),
+            ("Grupos em que participo", participando),
+        )
+        for titulo, grupos in secoes:
+            self._lista_grupos.insert(tk.END, titulo)
+            self._lista_grupos.itemconfig(tk.END, foreground="gray")
+            self._itens_grupos.append(None)
+            
+            if not grupos:
+                self._lista_grupos.insert(tk.END, " (nenhum)")
+                self._lista_grupos.itemconfig(tk.END, foreground="gray")
+                self._itens_grupos.append(None)
+                
+            for grupo in grupos:
+                self._lista_grupos.insert(tk.END, f" {grupo['nome']}")
+                self._itens_grupos.append(grupo)
+                
+    def _ao_selecionar_item_grupo(self, _evento=None) -> None:
+        selecao = self._lista_grupos.curselection()
+        if not selecao:
+            return
+        
+        grupo = self._itens_grupos[selecao[0]]
+        self._lista_grupos.selection_clear(0, tk.END)
+        if grupo is None:
+            return
+        
+        self._ao_abrir_grupo(grupo["id"])
 
     def mostrar_erro(self, mensagem: str) -> None:
         messagebox.showerror("Peregrine", mensagem, parent=self)

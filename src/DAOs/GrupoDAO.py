@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from src.database import SessionLocal
 from src.model.Grupo import Grupo
@@ -85,6 +86,26 @@ class GrupoDAO:
                 session.scalars(
                     select(GrupoRecord)
                     .where(GrupoRecord.organizador_id == organizador_id)
+                    .options(
+                        selectinload(GrupoRecord.organizador),
+                        selectinload(GrupoRecord.integrantes),
+                        # selectinload busca organizador e integrantes e guarda no GrupoRecord antes da conexão com o banco fechar
+                    )
+                    .order_by(GrupoRecord.id)
+                )
+            )
+            
+    def listar_por_participante(self, viajante_id: int) -> list[GrupoRecord]:
+        with SessionLocal() as session:
+            return list(
+                session.scalars(
+                    select(GrupoRecord)
+                    .join(GrupoRecord.integrantes)
+                    .where(ViajanteRecord.id == viajante_id)
+                    .options(
+                        selectinload(GrupoRecord.organizador),
+                        selectinload(GrupoRecord.integrantes),
+                    )
                     .order_by(GrupoRecord.id)
                 )
             )

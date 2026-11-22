@@ -210,15 +210,7 @@ class GrupoController:
 
     def _buscar_grupos(self) -> list[Grupo]:
         registros = self._grupo_dao.listar_por_organizador(self._organizador.id)
-        return [
-            Grupo(
-                id=r.id,
-                nome=r.nome,
-                organizador=self._organizador,
-                sugestoes=r.sugestoes,
-            )
-            for r in registros
-        ]
+        return [self._para_grupo(r) for r in registros]
 
     def selecionar_grupo_para_gerenciar(self) -> None:
         grupos = self._buscar_grupos()
@@ -231,3 +223,30 @@ class GrupoController:
             return
 
         self.gerenciar_grupo(grupos[indice])
+        
+    # UC07: Visualizar grupos de viagem (Implementado por Sarah Meireles)
+    
+    def _para_grupo(self, registro) -> Grupo:
+        if registro.organizador_id == self._organizador.id:
+            organizador = self._organizador
+        elif registro.organizador is not None:
+            organizador = self._para_viajante(registro.organizador)
+        else:
+            organizador = None
+            
+        return Grupo(
+            id=registro.id,
+            nome=registro.nome,
+            organizador=organizador,
+            integrantes=[self._para_viajante(i) for i in registro.integrantes],
+            sugestoes=registro.sugestoes or {},
+        )
+        
+    def listar_meus_grupos(self) -> dict[str, list[Grupo]]:
+        organizados = self._grupo_dao.listar_por_organizador(self._organizador.id)
+        participando = self._grupo_dao.listar_por_participante(self._organizador.id)
+        
+        return {
+            "organizados": [self._para_grupo(r) for r in organizados],
+            "participando": [self._para_grupo(r) for r in participando],
+        }
