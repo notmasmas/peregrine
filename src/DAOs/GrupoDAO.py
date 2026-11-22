@@ -1,10 +1,14 @@
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, select
+from sqlalchemy.orm import Session, selectinload
 
 from src.database import SessionLocal
 from src.model.Grupo import Grupo
-from src.persistence.models import ConviteRecord, GrupoRecord, ViajanteRecord
+from src.persistence.models import (
+    AcompanhanteRecord,
+    ConviteRecord,
+    GrupoRecord,
+    ViajanteRecord,
+)
 
 # Implementado por Maria Helena Melo
 
@@ -66,6 +70,72 @@ class GrupoDAO:
                 raise ValueError("Grupo não encontrado.")
             # list() força o carregamento dos integrantes antes de fechar a sessão
             return list(grupo.integrantes)
+
+    def _buscar_grupo_do_membro(
+        self, session: Session, grupo_id: int, viajante_id: int, *, bloquear: bool = False
+    ) -> tuple[GrupoRecord, set[int]]:
+        grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
+        if grupo is None:
+            raise ValueError("Grupo não encontrado.")
+
+        membros_ids = {integrante.id for integrante in grupo.integrantes}
+        if grupo.organizador_id is not None:
+            membros_ids.add(grupo.organizador_id)
+        if viajante_id not in membros_ids:
+            raise ValueError("Apenas membros do grupo podem acessar seus acompanhantes.")
+        return grupo, membros_ids
+
+    def listar_acompanhantes(
+        self, grupo_id: int, viajante_id: int
+    ) -> list[AcompanhanteRecord]:
+        with SessionLocal() as session:
+            grupo, _ = self._buscar_grupo_do_membro(session, grupo_id, viajante_id)
+            return sorted(grupo.acompanhantes, key=lambda a: (a.nome, a.id))
+
+    def _consulta_acompanhantes_disponiveis(
+        self, grupo_id: int, membros_ids: set[int]
+    ) -> Select[tuple[AcompanhanteRecord]]:
+        return select(AcompanhanteRecord).where(
+            AcompanhanteRecord.viajante_id.in_(membros_ids),
+            ~AcompanhanteRecord.grupos.any(GrupoRecord.id == grupo_id),
+        )
+
+    def listar_acompanhantes_disponiveis(
+        self, grupo_id: int, viajante_id: int
+    ) -> list[AcompanhanteRecord]:
+        with SessionLocal() as session:
+            _, membros_ids = self._buscar_grupo_do_membro(session, grupo_id, viajante_id)
+            consulta = self._consulta_acompanhantes_disponiveis(grupo_id, membros_ids)
+            consulta = consulta.options(
+                selectinload(AcompanhanteRecord.viajante_vinculado).load_only(
+                    ViajanteRecord.nome
+                )
+            ).order_by(AcompanhanteRecord.nome, AcompanhanteRecord.id)
+            return list(session.scalars(consulta))
+
+    def adicionar_acompanhantes(
+        self, grupo_id: int, viajante_id: int, acompanhante_ids: list[int]
+    ) -> None:
+        ids = set(acompanhante_ids)
+        if not ids:
+            raise ValueError("Selecione pelo menos um acompanhante.")
+
+        with SessionLocal() as session:
+            grupo, membros_ids = self._buscar_grupo_do_membro(
+                session, grupo_id, viajante_id, bloquear=True
+            )
+            consulta = self._consulta_acompanhantes_disponiveis(grupo_id, membros_ids)
+            acompanhantes = list(
+                session.scalars(consulta.where(AcompanhanteRecord.id.in_(ids)))
+            )
+            if len(acompanhantes) != len(ids):
+                raise ValueError(
+                    "A seleção contém acompanhantes que já estão no grupo "
+                    "ou que não estão vinculados a um membro."
+                )
+
+            grupo.acompanhantes.extend(acompanhantes)
+            session.commit()
  
     def adicionar_integrante(self, grupo_id: int, email: str) -> ViajanteRecord:
         return self.criar_convite(grupo_id, email).destinatario
@@ -177,7 +247,7 @@ class GrupoDAO:
  
     def remover_integrante(self, grupo_id: int, viajante_id: int) -> None:
         with SessionLocal() as session:
-            grupo = session.get(GrupoRecord, grupo_id)
+            grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
             if grupo is None:
                 raise ValueError("Grupo não encontrado.")
  

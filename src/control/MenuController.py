@@ -1,6 +1,10 @@
 import tkinter as tk
 from typing import Optional
 from collections.abc import Callable
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from src.model.Acompanhante import Acompanhante
 from src.model.Viajante import Viajante
 from src.model.Grupo import Grupo
 from src.view.MenuView import MenuView
@@ -71,9 +75,23 @@ class MenuController:
             self._tela.mostrar_erro("Grupo não encontrado.")
             return
 
-        eh_organizador = grupo.organizador.id == self._viajante_logado.id
-        nomes = [f"{grupo.organizador.nome} (organizador)"]
-        nomes += [i.nome for i in grupo.integrantes]
+        try:
+            grupo.acompanhantes[:] = self._grupo_controller.listar_acompanhantes(grupo_id)
+        except ValueError as erro:
+            self._tela.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            self._tela.mostrar_erro("Não foi possível carregar os acompanhantes do grupo.")
+            return
+
+        organizador = grupo.organizador
+        eh_organizador = (
+            organizador is not None and organizador.id == self._viajante_logado.id
+        )
+        nomes = [integrante.nome for integrante in grupo.integrantes]
+        if organizador is not None:
+            nomes.insert(0, f"{organizador.nome} (organizador)")
+        nomes.extend(self._nomes_acompanhantes(grupo.acompanhantes))
 
         self._tela.pack_forget()
         self._tela_grupo = GrupoDetalheView(
@@ -84,10 +102,40 @@ class MenuController:
             ao_voltar=self._voltar_do_grupo,
             ao_renomear=lambda nome: self._editar_grupo(grupo.id, nome),
             ao_remover=lambda: self._remover_e_voltar(grupo.id),
-            ao_adicionar_acompanhante=self._em_breve,
+            ao_adicionar_acompanhante=lambda: self._adicionar_acompanhantes(grupo),
             ao_abrir_itinerario=self._em_breve,
             ao_abrir_relatorio=self._em_breve,
         )
+
+    @staticmethod
+    def _nomes_acompanhantes(acompanhantes: list[Acompanhante]) -> list[str]:
+        return [f"{acompanhante.nome} (acompanhante)" for acompanhante in acompanhantes]
+
+    def _adicionar_acompanhantes(self, grupo: Grupo) -> None:
+        tela = self._tela_grupo
+        if tela is None or grupo.id is None:
+            return
+
+        try:
+            disponiveis = self._grupo_controller.listar_acompanhantes_disponiveis(grupo.id)
+            ids = tela.selecionar_acompanhantes(disponiveis)
+            if not ids:
+                return
+            self._grupo_controller.adicionar_acompanhantes(grupo.id, ids)
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível adicionar os acompanhantes ao grupo.")
+            return
+
+        selecionados = set(ids)
+        adicionados = [
+            acompanhante for acompanhante in disponiveis
+            if acompanhante.id in selecionados
+        ]
+        grupo.acompanhantes.extend(adicionados)
+        tela.adicionar_participantes(self._nomes_acompanhantes(adicionados))
         
     def _voltar_do_grupo(self) -> None:
         if self._tela_grupo is not None:

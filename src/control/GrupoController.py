@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.DAOs.GrupoDAO import GrupoDAO
+from src.model.Acompanhante import Acompanhante
 from src.model.Grupo import Grupo
 from src.model.Viajante import Viajante
 from src.model.Convite import Convite
@@ -298,6 +299,33 @@ class GrupoController:
             g for g in self._organizador.grupos_organizador if g.id != grupo_id
         ]
 
+    def listar_acompanhantes(self, grupo_id: int) -> list[Acompanhante]:
+        return [
+            Acompanhante(id=registro.id, nome=registro.nome)
+            for registro in self._grupo_dao.listar_acompanhantes(
+                grupo_id, self._organizador.id
+            )
+        ]
+
+    def listar_acompanhantes_disponiveis(self, grupo_id: int) -> list[Acompanhante]:
+        registros = self._grupo_dao.listar_acompanhantes_disponiveis(
+            grupo_id, self._organizador.id
+        )
+        return [
+            Acompanhante(
+                id=registro.id,
+                nome=registro.nome,
+                viajante_vinculado=Viajante(
+                    id=registro.viajante_id, nome=registro.viajante_vinculado.nome
+                ),
+            )
+            for registro in registros
+        ]
+
+    def adicionar_acompanhantes(self, grupo_id: int, acompanhante_ids: list[int]) -> None:
+        self._grupo_dao.adicionar_acompanhantes(
+            grupo_id, self._organizador.id, acompanhante_ids
+        )
         
     # UC07: Visualizar grupos de viagem (Implementado por Sarah Meireles)
     

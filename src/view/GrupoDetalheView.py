@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 from collections.abc import Callable
 
+from src.model.Acompanhante import Acompanhante
+
 POR_PAGINA = 3
 
 
@@ -83,6 +85,26 @@ class GrupoDetalheView(tk.Frame):
 
         self._desenhar_pagina()
 
+    def selecionar_acompanhantes(self, acompanhantes: list[Acompanhante]) -> list[int]:
+        if not acompanhantes:
+            messagebox.showinfo(
+                "Adicionar acompanhantes",
+                "Nenhum acompanhante disponível para adicionar a este grupo.",
+                parent=self,
+            )
+            return []
+
+        dialogo = _SelecaoAcompanhantes(self, acompanhantes)
+        return dialogo.result or []
+
+    def adicionar_participantes(self, nomes: list[str]) -> None:
+        self._pagina = len(self._participantes) // POR_PAGINA
+        self._participantes.extend(nomes)
+        self._desenhar_pagina()
+
+    def mostrar_erro(self, mensagem: str) -> None:
+        messagebox.showerror("Peregrine", mensagem, parent=self)
+
     def _desenhar_pagina(self) -> None:
         for filho in self._area_participantes.winfo_children():
             filho.destroy()
@@ -132,3 +154,58 @@ class GrupoDetalheView(tk.Frame):
             parent=self,
         ):
             self._ao_remover()
+
+
+class _SelecaoAcompanhantes(simpledialog.Dialog):
+    def __init__(self, master: tk.Misc, acompanhantes: list[Acompanhante]) -> None:
+        self._acompanhantes = acompanhantes
+        super().__init__(master, title="Adicionar acompanhantes")
+
+    def body(self, master: tk.Misc) -> tk.Listbox:
+        tk.Label(master, text="Selecione os acompanhantes para adicionar.").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+        self._lista = tk.Listbox(
+            master, selectmode=tk.MULTIPLE, height=min(len(self._acompanhantes), 8)
+        )
+        self._lista.grid(row=1, column=0, sticky="nsew")
+        barra = tk.Scrollbar(master, command=self._lista.yview)
+        barra.grid(row=1, column=1, sticky="ns")
+        barra_horizontal = tk.Scrollbar(
+            master, orient=tk.HORIZONTAL, command=self._lista.xview
+        )
+        barra_horizontal.grid(row=2, column=0, sticky="ew")
+        self._lista.config(yscrollcommand=barra.set, xscrollcommand=barra_horizontal.set)
+
+        for acompanhante in self._acompanhantes:
+            responsavel = acompanhante.viajante_vinculado
+            rotulo = acompanhante.nome
+            if responsavel is not None:
+                rotulo = f"{rotulo} — {responsavel.nome}"
+            self._lista.insert(tk.END, rotulo)
+        return self._lista
+
+    def buttonbox(self) -> None:
+        botoes = tk.Frame(self)
+        botoes.pack(pady=(0, 8))
+        tk.Button(botoes, text="Cancelar", command=self.cancel).pack(side=tk.LEFT)
+        tk.Button(botoes, text="Adicionar", command=self.ok).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        self.bind("<Return>", self.ok)
+        self.bind("<Escape>", self.cancel)
+
+    def validate(self) -> bool:
+        if not self._lista.curselection():
+            messagebox.showerror(
+                "Adicionar acompanhantes",
+                "Selecione pelo menos um acompanhante.",
+                parent=self,
+            )
+            return False
+        return True
+
+    def apply(self) -> None:
+        self.result = [
+            self._acompanhantes[indice].id for indice in self._lista.curselection()
+        ]
