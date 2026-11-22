@@ -1,7 +1,7 @@
 from datetime import date
 import math
 
-from sqlalchemy import select
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm import selectinload
 
 from src.database import SessionLocal
@@ -84,7 +84,6 @@ class ItinerarioDAO:
             itinerario.programacao = programacao
             if itinerario.data_inicial is None or data < itinerario.data_inicial:
                 itinerario.data_inicial = data
-            itinerario.valor_total += sum(preco for _, preco, _ in reservas)
 
             for nome, preco, titular_id in reservas:
                 session.add(
@@ -93,9 +92,10 @@ class ItinerarioDAO:
                         preco=preco,
                         titular_id=titular_id,
                         itinerario_id=itinerario.id,
+                        data=data,
                     )
                 )
-
+            self._recalcular_total(session, itinerario)
             session.commit()
 
     def editar_dia(
@@ -156,7 +156,13 @@ class ItinerarioDAO:
             itinerario.data_inicial = min(
                 date.fromisoformat(data) for data in programacao
             )
-            itinerario.valor_total += sum(preco for _, preco, _ in reservas)
+            
+            session.execute(
+                delete(ReservaRecord).where(
+                    ReservaRecord.itinerario_id == itinerario.id,
+                    ReservaRecord.data == data_original,
+                )
+            )
 
             for nome, preco, titular_id in reservas:
                 session.add(
@@ -165,9 +171,10 @@ class ItinerarioDAO:
                         preco=preco,
                         titular_id=titular_id,
                         itinerario_id=itinerario.id,
+                        data=data_nova,
                     )
                 )
-
+            self._recalcular_total(session, itinerario)
             session.commit()
 
     def remover_dias(self, grupo_id: int, datas: set[date]) -> None:
@@ -195,4 +202,44 @@ class ItinerarioDAO:
                 if programacao
                 else None
             )
+            
+            session.execute(
+                delete(ReservaRecord).where(
+                    ReservaRecord.itinerario_id == itinerario.id,
+                    ReservaRecord.data.in_(datas),
+                )
+            )
+            self._recalcular_total(session, itinerario)
             session.commit()
+            
+    # UC14: Dividir custos da viagem entre membros do grupo (Implementado por Sarah Meireles)
+    @staticmethod
+    def _recalcular_total(session, itinerario: ItinerarioRecord) -> None:
+        session.flush() # enviar comandos SQL pendentes para o banco
+        itinerario.valor_total = session.scalar(
+            select(func.coalesce(func.sum(ReservaRecord.preco), 0.0)).where(
+                ReservaRecord.itinerario_id == itinerario.id
+            )
+        )
+    
+    def listar_reservas_por_dia(self, grupo_id: int) -> dict[str, list[dict]]:
+        with SessionLocal() as session:
+            reservas = session.scalars(
+                select(ReservaRecord)
+                .join(ItinerarioRecord, ReservaRecord.itinerario_id == ItinerarioRecord.id)
+                .where(
+                    ItinerarioRecord.grupo_id == grupo_id,
+                    ReservaRecord.data.is_not(None)
+                )
+                .order_by(ReservaRecord.id)
+            )
+            resultado: dict[str, list[dict]] = {}
+            for reserva in reservas:
+                resultado.setdefault(reserva.data.isoformat(), []).append(
+                    {
+                        "nome": reserva.nome,
+                        "preco": reserva.preco,
+                        "titular_id": reserva.titular_id,
+                    }
+                )
+            return resultado

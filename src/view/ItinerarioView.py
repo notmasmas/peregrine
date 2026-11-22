@@ -242,6 +242,20 @@ class ItinerarioView(tk.Frame):
             self._entrada_data.insert(0, dia["data"])
             self._entrada_cidade.insert(0, dia["cidade"])
             self._entrada_passeio.insert(0, dia["passeio"])
+            
+            reservas = dia.get("reservas", [])
+            if reservas:
+                for filho in self._area_reservas.winfo_children():
+                    filho.destroy() # destrói bloco vazio no começo
+                self._reservas.clear()
+                ids = [id_ for id_, _ in self._participantes]
+                for reserva in reservas:
+                    self._adicionar_reserva()
+                    nome, preco, titular = self._reservas[-1]
+                    nome.insert(0, reserva["nome"])
+                    preco.insert(0, f"{reserva['preco']:.2f}".replace(".", ","))
+                    if reserva["titular_id"] in ids:
+                        titular.current(ids.index(reserva["titular_id"]))
 
         self._tela_inicial.pack_forget()
         self._tela_criacao.pack(fill=tk.BOTH, expand=True)
@@ -451,6 +465,7 @@ class ItinerarioView(tk.Frame):
             "data": data.strftime("%d/%m/%Y"),
             "passeio": dados["passeio"],
             "cidade": dados["cidade"],
+            "reservas": dados["reservas"],
         }
         dias_atualizados = [
             dia

@@ -14,6 +14,8 @@ from src.control.GrupoController import GrupoController
 from src.control.ItinerarioController import ItinerarioController
 from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.view.ItinerarioView import ItinerarioView
+from src.control.RelatorioController import RelatorioController
+from src.view.RelatorioView import RelatorioView
 
 
 class MenuController:
@@ -33,6 +35,8 @@ class MenuController:
         self._grupos_por_id: dict[int, Grupo] = {}
         self._tela_grupo: Optional[GrupoDetalheView] = None
         self._tela_itinerario: Optional[ItinerarioView] = None
+        self._relatorio_controller = RelatorioController()
+        self._tela_relatorio: Optional[RelatorioView] = None
         self._tela = MenuView(
             root,
             nome_viajante=viajante.nome,
@@ -105,7 +109,7 @@ class MenuController:
             ao_remover_participante=lambda item: self._remover_participante(grupo, item),
             ao_adicionar_acompanhante=lambda: self._adicionar_acompanhantes(grupo),
             ao_abrir_itinerario=lambda: self._abrir_itinerario(grupo),
-            ao_abrir_relatorio=self._em_breve,
+            ao_abrir_relatorio=lambda: self._abrir_relatorio(grupo),
             ao_sair_do_grupo=lambda: self._sair_do_grupo(grupo),
         )
 
@@ -327,9 +331,6 @@ class MenuController:
         if self._remover_grupo(grupo_id):
             self._voltar_do_grupo()
     
-    def _em_breve(self) -> None:
-        self._tela.mostrar_sucesso("Funcionalidade em desenvolvimento.")
-    
     @staticmethod
     def _resumo_grupo(grupo: Grupo) -> dict:
         return {"id": grupo.id, "nome": grupo.nome}
@@ -374,3 +375,30 @@ class MenuController:
 
         self._tela.mostrar_sucesso("Grupo removido com sucesso.")
         return True
+    
+    # UC15: Emitir relatório de viagem (Implementado por Sarah Meireles)
+    
+    def _abrir_relatorio(self, grupo: Grupo) -> None:
+        tela_grupo = self._tela_grupo
+        if tela_grupo is None:
+            return
+        try:
+            relatorio = self._relatorio_controller.emitir(grupo)
+        except ValueError as erro:
+            tela_grupo.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela_grupo.mostrar_erro("Não foi possível emitir o relatório.")
+            return
+
+        tela_grupo.pack_forget()
+        self._tela_relatorio = RelatorioView(
+            self._root, relatorio, ao_voltar=self._voltar_do_relatorio
+        )
+
+    def _voltar_do_relatorio(self) -> None:
+        if self._tela_relatorio is not None:
+            self._tela_relatorio.destroy()
+            self._tela_relatorio = None
+        if self._tela_grupo is not None:
+            self._tela_grupo.pack(fill=tk.BOTH, expand=True)

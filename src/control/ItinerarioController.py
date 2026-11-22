@@ -9,6 +9,7 @@ class ItinerarioController:
 
     def listar_dias(self, grupo_id: int) -> list[dict[str, str]]:
         programacao = self._itinerario_dao.listar_programacao(grupo_id)
+        reservas_por_dia = self._itinerario_dao.listar_reservas_por_dia(grupo_id)
         if not isinstance(programacao, dict) or any(
             not isinstance(data, str) for data in programacao
         ):
@@ -39,6 +40,7 @@ class ItinerarioController:
                     "data": data_formatada,
                     "passeio": passeio,
                     "cidade": cidade,
+                    "reservas": reservas_por_dia.get(data, []),
                 }
             )
 

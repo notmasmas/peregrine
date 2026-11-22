@@ -168,8 +168,8 @@ class ReservaRecord(Base):
         ForeignKey("itinerarios.id"),
         nullable=True,
     )
-
     titular: Mapped["ViajanteRecord"] = relationship(back_populates="reservas")
     itinerario: Mapped["ItinerarioRecord | None"] = relationship(
         back_populates="reservas"
     )
+    data: Mapped[date | None] = mapped_column(Date, nullable=True)
