@@ -29,10 +29,7 @@ class MenuController:
             root,
             nome_viajante=viajante.nome,
             ao_criar_grupo=self._criar_grupo,
-            ao_selecionar_grupo_para_gerenciar=self._abrir_grupo,
-            ao_listar_grupos=self._listar_grupo,
-            ao_editar_grupo=self._editar_grupo,
-            ao_remover_grupo=self._remover_grupo,
+            ao_listar_grupos=self._listar_grupos,
             ao_abrir_acompanhante=self._abrir_acompanhante,
             ao_listar_convites=self._listar_convites,
             ao_aceitar_convite=self._aceitar_convite,
@@ -40,7 +37,6 @@ class MenuController:
             ao_sair=self._sair_do_menu,
             ao_abrir_grupo=self._abrir_grupo,
         )
-        self._atualizar_grupos()
 
     def _abrir_acompanhante(self) -> None:
         viajante = self._viajante_logado
@@ -63,14 +59,11 @@ class MenuController:
         self._ao_sair()
 
     def _criar_grupo(self, nome: str, participantes: list[str]) -> bool:
-        criado = self._grupo_controller.criar_grupo(
+        return self._grupo_controller.criar_grupo(
             {"nome": nome, "participantes": participantes},
             mostrar_erro=self._tela.mostrar_erro,
             mostrar_sucesso=self._tela.mostrar_sucesso,
         )
-        if criado:
-            self._atualizar_grupos()
-        return criado
     
     def _abrir_grupo(self, grupo_id: int) -> None:
         grupo = self._grupos_por_id.get(grupo_id)
@@ -89,7 +82,8 @@ class MenuController:
             participantes=nomes,
             eh_organizador=eh_organizador,
             ao_voltar=self._voltar_do_grupo,
-            ao_editar=self._em_breve,
+            ao_renomear=lambda nome: self._editar_grupo(grupo.id, nome),
+            ao_remover=lambda: self._remover_e_voltar(grupo.id),
             ao_adicionar_acompanhante=self._em_breve,
             ao_abrir_itinerario=self._em_breve,
             ao_abrir_relatorio=self._em_breve,
@@ -99,9 +93,12 @@ class MenuController:
         if self._tela_grupo is not None:
             self._tela_grupo.destroy()
             self._tela_grupo = None
-        self._atualizar_grupos()
         self._tela.pack(fill=tk.BOTH, expand=True)
         self._tela.mostrar_inicio()
+    
+    def _remover_e_voltar(self, grupo_id: int) -> None:
+        if self._remover_grupo(grupo_id):
+            self._voltar_do_grupo()
     
     def _em_breve(self) -> None:
         self._tela.mostrar_sucesso("Funcionalidade em desenvolvimento.")
@@ -109,15 +106,6 @@ class MenuController:
     @staticmethod
     def _resumo_grupo(grupo: Grupo) -> dict:
         return {"id": grupo.id, "nome": grupo.nome}
-        
-    def _atualizar_grupos(self) -> None:
-        grupos = self._grupo_controller.listar_meus_grupos()
-        todos = grupos["organizados"] + grupos["participando"]
-        self._grupos_por_id = {g.id: g for g in todos}
-        self._tela.exibir_grupos(
-            [self._resumo_grupo(g) for g in grupos["organizados"]],
-            [self._resumo_grupo(g) for g in grupos["participando"]],
-        )
 
     def _listar_convites(self) -> list[dict]:
         return self._grupo_controller.listar_convites_pendentes()
@@ -128,11 +116,14 @@ class MenuController:
     def _rejeitar_convite(self, convite_id: int) -> bool:
         return self._grupo_controller.rejeitar_convite(convite_id)
 
-    def _listar_grupos(self) -> list[dict]:
-        return [
-            {"id": grupo.id, "nome": grupo.nome}
-            for grupo in self._grupo_controller.listar_grupos_organizados()
-        ]
+    def _listar_grupos(self) -> tuple[list[dict], list[dict]]:
+        grupos = self._grupo_controller.listar_meus_grupos()
+        todos = grupos["organizados"] + grupos["participando"]
+        self._grupos_por_id = {g.id: g for g in todos}
+        return (
+            [self._resumo_grupo(g) for g in grupos["organizados"]],
+            [self._resumo_grupo(g) for g in grupos["participando"]],
+        )
 
     def _editar_grupo(self, grupo_id: int, nome: str) -> bool:
         try:

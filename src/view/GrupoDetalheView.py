@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import messagebox, simpledialog
 from collections.abc import Callable
 
 POR_PAGINA = 3
@@ -12,12 +13,15 @@ class GrupoDetalheView(tk.Frame):
         participantes: list[str],
         eh_organizador: bool,
         ao_voltar: Callable[[], None],
-        ao_editar: Callable[[], None],
+        ao_renomear: Callable[[str], bool],
+        ao_remover: Callable[[], None],
         ao_adicionar_acompanhante: Callable[[], None],
         ao_abrir_itinerario: Callable[[], None],
         ao_abrir_relatorio: Callable[[], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
+        self._ao_renomear = ao_renomear
+        self._ao_remover = ao_remover
         self._participantes = participantes
         self._pagina = 0
         self.pack(fill=tk.BOTH, expand=True)
@@ -33,14 +37,20 @@ class GrupoDetalheView(tk.Frame):
         )
         tk.Label(cabecalho, text="Grupo", fg="gray").grid(row=0, column=1)
         if eh_organizador:
-            tk.Button(cabecalho, text="✎", width=3, command=ao_editar).grid(
-                row=0, column=2
+            botao_editar = tk.Menubutton(
+                cabecalho, text="✎", relief=tk.RAISED, width=3
             )
+            menu = tk.Menu(botao_editar, tearoff=0)
+            menu.add_command(label="Renomear grupo", command=self._renomear)
+            menu.add_command(label="Remover grupo", command=self._remover)
+            botao_editar.config(menu=menu)
+            botao_editar.grid(row=0, column=2)
 
         # Nome do grupo
-        tk.Label(
+        self._rotulo_nome = tk.Label(
             self, text=nome_grupo, font=("TkDefaultFont", 18, "bold"), wraplength=360
-        ).grid(row=1, column=0, columnspan=2, pady=(24, 16))
+        )
+        self._rotulo_nome.grid(row=1, column=0, columnspan=2, pady=(24, 16))
 
         # Participantes (uma "linha" por pessoa, POR_PAGINA por página)
         self._area_participantes = tk.Frame(self)
@@ -103,3 +113,22 @@ class GrupoDetalheView(tk.Frame):
     def _proxima_pagina(self) -> None:
         self._pagina += 1
         self._desenhar_pagina()
+        
+    def _renomear(self) -> None:
+        nome = simpledialog.askstring(
+            "Renomear grupo",
+            "Novo nome do grupo (1 a 20 caracteres)",
+            initialvalue=self._rotulo_nome.cget("text"),
+            parent=self,
+        )
+        if nome is not None and self._ao_renomear(nome.strip()):
+            self._rotulo_nome.config(text=nome.strip())
+
+    def _remover(self) -> None:
+        if messagebox.askyesno(
+            "Remover grupo",
+            "Deseja remover este grupo?",
+            default=messagebox.NO,
+            parent=self,
+        ):
+            self._ao_remover()
