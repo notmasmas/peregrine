@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from src.database import SessionLocal
 from src.model.Grupo import Grupo
@@ -34,6 +35,28 @@ class GrupoDAO:
     def buscar_por_id(self, grupo_id: int) -> GrupoRecord | None:
         with SessionLocal() as session:
             return session.get(GrupoRecord, grupo_id)
+
+    def _buscar_para_alteracao(
+        self, session: Session, grupo_id: int, organizador_id: int
+    ) -> GrupoRecord:
+        grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
+        if grupo is None:
+            raise ValueError("Grupo não encontrado.")
+        if organizador_id is None or grupo.organizador_id != organizador_id:
+            raise ValueError("Apenas o organizador pode alterar este grupo.")
+        return grupo
+
+    def atualizar_nome(self, grupo_id: int, organizador_id: int, nome: str) -> None:
+        with SessionLocal() as session:
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+            grupo.nome = nome
+            session.commit()
+
+    def remover(self, grupo_id: int, organizador_id: int) -> None:
+        with SessionLocal() as session:
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+            session.delete(grupo)
+            session.commit()
 
     def listar_integrantes(self, grupo_id: int) -> list[ViajanteRecord]:
         with SessionLocal() as session:

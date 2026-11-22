@@ -20,6 +20,10 @@ class GrupoController:
         self._grupo_dao = GrupoDAO()
         self._tela = GrupoView()
 
+    def _validar_nome(self, nome: str) -> None:
+        if not 1 <= len(nome) <= 20:
+            raise CampoInvalidoException("Nome de grupo inválido")
+
     # UC03: Criar grupo de viagem (Implementado por Maria Helena Melo)
     
     def criar_grupo(
@@ -44,8 +48,7 @@ class GrupoController:
         )
 
         try:
-            if len(dados["nome"]) == 0 or len(dados["nome"]) > 20:
-                raise CampoInvalidoException("Nome de grupo inválido")
+            self._validar_nome(dados["nome"])
 
             if len(dados["participantes"]) == 0:
                 raise CampoInvalidoException("Deve conter no mínimo um e-mail válido")
@@ -263,7 +266,7 @@ class GrupoController:
 
     # ---------- GRUPOS DO ORGANIZADOR ----------
 
-    def _buscar_grupos(self) -> list[Grupo]:
+    def listar_grupos_organizados(self) -> list[Grupo]:
         registros = self._grupo_dao.listar_por_organizador(self._organizador.id)
         return [
             Grupo(
@@ -275,14 +278,30 @@ class GrupoController:
             for r in registros
         ]
 
-    def selecionar_grupo_para_gerenciar(self) -> None:
-        grupos = self._buscar_grupos()
+    def _selecionar_grupo(self) -> Grupo | None:
+        grupos = self.listar_grupos_organizados()
         if not grupos:
             self._tela.mostra_mensagem("Você ainda não organiza nenhum grupo.")
-            return
+            return None
 
         indice = self._tela.seleciona_grupo([g.nome for g in grupos])
-        if indice is None:
-            return
+        return grupos[indice] if indice is not None else None
 
-        self.gerenciar_grupo(grupos[indice])
+    def selecionar_grupo_para_gerenciar(self) -> None:
+        grupo = self._selecionar_grupo()
+        if grupo is not None:
+            self.gerenciar_grupo(grupo)
+
+    def editar_grupo(self, grupo_id: int, nome: str) -> None:
+        self._validar_nome(nome)
+        self._grupo_dao.atualizar_nome(grupo_id, self._organizador.id, nome)
+
+        for grupo_organizado in self._organizador.grupos_organizador:
+            if grupo_organizado.id == grupo_id:
+                grupo_organizado.nome = nome
+
+    def remover_grupo(self, grupo_id: int) -> None:
+        self._grupo_dao.remover(grupo_id, self._organizador.id)
+        self._organizador.grupos_organizador[:] = [
+            g for g in self._organizador.grupos_organizador if g.id != grupo_id
+        ]

@@ -78,6 +78,7 @@ class GrupoRecord(Base):
     )
     itinerario: Mapped["ItinerarioRecord | None"] = relationship(
         back_populates="grupo",
+        cascade="save-update, merge, delete",
         uselist=False,
     )
     convites: Mapped[list["ConviteRecord"]] = relationship(

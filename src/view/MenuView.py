@@ -1,6 +1,6 @@
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 
 class MenuView(tk.Frame):
@@ -9,7 +9,9 @@ class MenuView(tk.Frame):
         master: tk.Misc,
         nome_viajante: str,
         ao_criar_grupo: Callable[[str, list[str]], bool],
-        ao_selecionar_grupo_para_gerenciar: Callable[[], None],
+        ao_listar_grupos: Callable[[], list[dict]],
+        ao_editar_grupo: Callable[[int, str], bool],
+        ao_remover_grupo: Callable[[int], bool],
         ao_abrir_acompanhante: Callable[[], None],
         ao_listar_convites: Callable[[], list[dict]],
         ao_aceitar_convite: Callable[[int], bool],
@@ -19,9 +21,9 @@ class MenuView(tk.Frame):
         super().__init__(master, padx=24, pady=24)
         self._nome_viajante = nome_viajante
         self._ao_criar_grupo = ao_criar_grupo
-        self._ao_selecionar_grupo_para_gerenciar = (
-            ao_selecionar_grupo_para_gerenciar
-        )
+        self._ao_listar_grupos = ao_listar_grupos
+        self._ao_editar_grupo = ao_editar_grupo
+        self._ao_remover_grupo = ao_remover_grupo
         self._ao_abrir_acompanhante = ao_abrir_acompanhante
         self._ao_listar_convites = ao_listar_convites
         self._ao_aceitar_convite = ao_aceitar_convite
@@ -71,9 +73,8 @@ class MenuView(tk.Frame):
             font=("TkDefaultFont", 18, "bold"),
         ).grid(row=1, column=0, columnspan=2, pady=(32, 12))
 
-        tk.Frame(tela).grid(
-            row=2, column=0, columnspan=2, sticky="nsew"
-        )
+        self._lista_grupos = tk.Listbox(tela, exportselection=False)
+        self._lista_grupos.grid(row=2, column=0, columnspan=2, sticky="nsew")
         botoes_esquerda = tk.Frame(tela)
         botoes_esquerda.grid(row=3, column=0, sticky=tk.W, pady=(12, 0))
         tk.Button(
@@ -82,11 +83,14 @@ class MenuView(tk.Frame):
         tk.Button(
             botoes_esquerda, text="+ Novo", command=self.mostrar_criacao
         ).pack(side=tk.LEFT, padx=(8, 0))
+        acoes_grupo = tk.Frame(tela)
+        acoes_grupo.grid(row=3, column=1, sticky=tk.E, pady=(12, 0))
         tk.Button(
-            tela,
-            text="Gerenciar grupos",
-            command=self._ao_selecionar_grupo_para_gerenciar,
-        ).grid(row=3, column=1, sticky=tk.E, pady=(12, 0))
+            acoes_grupo, text="Editar grupo", command=self._editar_grupo_selecionado
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            acoes_grupo, text="Remover grupo", command=self._remover_grupo_selecionado
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
     def _criar_tela_criacao(self, container: tk.Frame) -> None:
         tela = self._criar_tela(container, "criar_grupo")
@@ -192,7 +196,53 @@ class MenuView(tk.Frame):
         self._telas[nome].tkraise()
 
     def mostrar_inicio(self) -> None:
+        self._atualizar_lista_grupos()
         self._mostrar_tela("inicio")
+
+    def _atualizar_lista_grupos(self) -> None:
+        self._grupos = self._ao_listar_grupos()
+        self._lista_grupos.delete(0, tk.END)
+        if not self._grupos:
+            self._lista_grupos.insert(tk.END, "Você ainda não organiza nenhum grupo.")
+            return
+
+        for grupo in self._grupos:
+            self._lista_grupos.insert(tk.END, grupo["nome"])
+
+    def _grupo_selecionado(self) -> dict | None:
+        selecao = self._lista_grupos.curselection()
+        if not self._grupos or not selecao:
+            self.mostrar_erro("Selecione um grupo para continuar.")
+            return None
+        return self._grupos[selecao[0]]
+
+    def _editar_grupo_selecionado(self) -> None:
+        grupo = self._grupo_selecionado()
+        if grupo is None:
+            return
+
+        nome = simpledialog.askstring(
+            "Editar grupo",
+            "Novo nome do grupo (1 a 20 caracteres)",
+            initialvalue=grupo["nome"],
+            parent=self,
+        )
+        if nome is not None and self._ao_editar_grupo(grupo["id"], nome.strip()):
+            self._atualizar_lista_grupos()
+
+    def _remover_grupo_selecionado(self) -> None:
+        grupo = self._grupo_selecionado()
+        if grupo is None:
+            return
+
+        confirmado = messagebox.askyesno(
+            "Remover grupo",
+            f'Deseja remover o grupo "{grupo["nome"]}"?',
+            default=messagebox.NO,
+            parent=self,
+        )
+        if confirmado and self._ao_remover_grupo(grupo["id"]):
+            self._atualizar_lista_grupos()
 
     def mostrar_criacao(self) -> None:
         self._mostrar_tela("criar_grupo")
