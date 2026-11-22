@@ -87,21 +87,21 @@ class GrupoDetalheView(tk.Frame):
         )
         self._botao_proxima.pack(side=tk.LEFT, padx=(4, 0))
 
+        acoes = tk.Frame(self)
+        acoes.grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
         if eh_organizador:
-            acoes = tk.Frame(self)
-            acoes.grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
             tk.Button(
                 acoes, text="+ Adicionar participante", command=self._convidar_integrante
-            ).pack(side=tk.LEFT)
+            ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Button(
+            acoes, text="+ Adicionar acompanhante", command=ao_adicionar_acompanhante
+        ).pack(side=tk.LEFT)
+        if not eh_organizador:
             tk.Button(
-                acoes, text="+ Adicionar acompanhante", command=ao_adicionar_acompanhante
-            ).pack(side=tk.LEFT, padx=(8, 0))
-        else:
-            tk.Button(
-                self,
+                acoes,
                 text="Sair do grupo",
                 command=self._confirmar_saida_do_grupo,
-            ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(16, 0))
+            ).pack(side=tk.LEFT, padx=(8, 0))
 
         # Rodapé
         self.grid_rowconfigure(5, weight=1)

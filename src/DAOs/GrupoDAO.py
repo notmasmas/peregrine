@@ -41,12 +41,18 @@ class GrupoDAO:
         with SessionLocal() as session:
             return session.get(GrupoRecord, grupo_id)
 
-    def _buscar_para_alteracao(
-        self, session: Session, grupo_id: int, organizador_id: int, *, bloquear: bool = True
+    def _buscar_grupo(
+        self, session: Session, grupo_id: int, *, bloquear: bool = False
     ) -> GrupoRecord:
         grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
         if grupo is None:
             raise ValueError("Grupo não encontrado.")
+        return grupo
+
+    def _buscar_para_alteracao(
+        self, session: Session, grupo_id: int, organizador_id: int
+    ) -> GrupoRecord:
+        grupo = self._buscar_grupo(session, grupo_id, bloquear=True)
         if organizador_id is None or grupo.organizador_id != organizador_id:
             raise ValueError("Apenas o organizador pode alterar este grupo.")
         return grupo
@@ -82,31 +88,30 @@ class GrupoDAO:
         self, grupo_id: int, viajante_id: int
     ) -> list[AcompanhanteRecord]:
         with SessionLocal() as session:
-            grupo = session.get(GrupoRecord, grupo_id)
-            if grupo is None:
-                raise ValueError("Grupo não encontrado.")
+            grupo = self._buscar_grupo(session, grupo_id)
             if viajante_id not in self._ids_membros(grupo):
                 raise ValueError("Apenas membros do grupo podem acessar seus acompanhantes.")
             return sorted(grupo.acompanhantes, key=lambda a: (a.nome, a.id))
 
     def _consulta_acompanhantes_disponiveis(
-        self, grupo_id: int, membros_ids: set[int]
+        self, grupo: GrupoRecord, viajante_id: int
     ) -> Select[tuple[AcompanhanteRecord]]:
+        membros_ids = self._ids_membros(grupo)
+        if viajante_id not in membros_ids:
+            raise ValueError("Apenas membros do grupo podem adicionar acompanhantes.")
+
+        responsaveis_ids = membros_ids if viajante_id == grupo.organizador_id else {viajante_id}
         return select(AcompanhanteRecord).where(
-            AcompanhanteRecord.viajante_id.in_(membros_ids),
-            ~AcompanhanteRecord.grupos.any(GrupoRecord.id == grupo_id),
+            AcompanhanteRecord.viajante_id.in_(responsaveis_ids),
+            ~AcompanhanteRecord.grupos.any(GrupoRecord.id == grupo.id),
         )
 
     def listar_acompanhantes_disponiveis(
-        self, grupo_id: int, organizador_id: int
+        self, grupo_id: int, viajante_id: int
     ) -> list[AcompanhanteRecord]:
         with SessionLocal() as session:
-            grupo = self._buscar_para_alteracao(
-                session, grupo_id, organizador_id, bloquear=False
-            )
-            consulta = self._consulta_acompanhantes_disponiveis(
-                grupo_id, self._ids_membros(grupo)
-            )
+            grupo = self._buscar_grupo(session, grupo_id)
+            consulta = self._consulta_acompanhantes_disponiveis(grupo, viajante_id)
             consulta = consulta.options(
                 selectinload(AcompanhanteRecord.viajante_vinculado).load_only(
                     ViajanteRecord.nome
@@ -115,24 +120,22 @@ class GrupoDAO:
             return list(session.scalars(consulta))
 
     def adicionar_acompanhantes(
-        self, grupo_id: int, organizador_id: int, acompanhante_ids: list[int]
+        self, grupo_id: int, viajante_id: int, acompanhante_ids: list[int]
     ) -> None:
         ids = set(acompanhante_ids)
         if not ids:
             raise ValueError("Selecione pelo menos um acompanhante.")
 
         with SessionLocal() as session:
-            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
-            consulta = self._consulta_acompanhantes_disponiveis(
-                grupo_id, self._ids_membros(grupo)
-            )
+            grupo = self._buscar_grupo(session, grupo_id, bloquear=True)
+            consulta = self._consulta_acompanhantes_disponiveis(grupo, viajante_id)
             acompanhantes = list(
                 session.scalars(consulta.where(AcompanhanteRecord.id.in_(ids)))
             )
             if len(acompanhantes) != len(ids):
                 raise ValueError(
                     "A seleção contém acompanhantes que já estão no grupo "
-                    "ou que não estão vinculados a um membro."
+                    "ou que você não tem permissão para adicionar."
                 )
 
             grupo.acompanhantes.extend(acompanhantes)
