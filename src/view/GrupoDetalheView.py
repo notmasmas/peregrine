@@ -1,10 +1,20 @@
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
+from typing import Literal
 
 from src.model.Acompanhante import Acompanhante
 
 POR_PAGINA = 3
+
+
+@dataclass(frozen=True)
+class ParticipanteGrupo:
+    id: int | None
+    nome: str
+    tipo: Literal["organizador", "participante", "acompanhante"]
 
 
 class GrupoDetalheView(tk.Frame):
@@ -12,11 +22,13 @@ class GrupoDetalheView(tk.Frame):
         self,
         master: tk.Misc,
         nome_grupo: str,
-        participantes: list[str],
+        participantes: list[ParticipanteGrupo],
         eh_organizador: bool,
         ao_voltar: Callable[[], None],
         ao_renomear: Callable[[str], bool],
         ao_remover: Callable[[], None],
+        ao_convidar_integrante: Callable[[str], None],
+        ao_remover_participante: Callable[[ParticipanteGrupo], None],
         ao_adicionar_acompanhante: Callable[[], None],
         ao_abrir_itinerario: Callable[[], None],
         ao_abrir_relatorio: Callable[[], None],
@@ -24,6 +36,9 @@ class GrupoDetalheView(tk.Frame):
         super().__init__(master, padx=24, pady=24)
         self._ao_renomear = ao_renomear
         self._ao_remover = ao_remover
+        self._ao_convidar_integrante = ao_convidar_integrante
+        self._ao_remover_participante = ao_remover_participante
+        self._eh_organizador = eh_organizador
         self._participantes = participantes
         self._pagina = 0
         self.pack(fill=tk.BOTH, expand=True)
@@ -70,9 +85,15 @@ class GrupoDetalheView(tk.Frame):
         )
         self._botao_proxima.pack(side=tk.LEFT, padx=(4, 0))
 
-        tk.Button(
-            self, text="+ Adicionar acompanhante", command=ao_adicionar_acompanhante
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        if eh_organizador:
+            acoes = tk.Frame(self)
+            acoes.grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
+            tk.Button(
+                acoes, text="+ Adicionar participante", command=self._convidar_integrante
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                acoes, text="+ Adicionar acompanhante", command=ao_adicionar_acompanhante
+            ).pack(side=tk.LEFT, padx=(8, 0))
 
         # Rodapé
         self.grid_rowconfigure(5, weight=1)
@@ -97,36 +118,72 @@ class GrupoDetalheView(tk.Frame):
         dialogo = _SelecaoAcompanhantes(self, acompanhantes)
         return dialogo.result or []
 
-    def adicionar_participantes(self, nomes: list[str]) -> None:
+    def adicionar_participantes(self, participantes: list[ParticipanteGrupo]) -> None:
         self._pagina = len(self._participantes) // POR_PAGINA
-        self._participantes.extend(nomes)
+        self._participantes.extend(participantes)
+        self._desenhar_pagina()
+
+    def atualizar_participantes(self, participantes: list[ParticipanteGrupo]) -> None:
+        self._participantes = participantes
         self._desenhar_pagina()
 
     def mostrar_erro(self, mensagem: str) -> None:
         messagebox.showerror("Peregrine", mensagem, parent=self)
 
+    def mostrar_sucesso(self, mensagem: str) -> None:
+        messagebox.showinfo("Peregrine", mensagem, parent=self)
+
     def _desenhar_pagina(self) -> None:
         for filho in self._area_participantes.winfo_children():
             filho.destroy()
 
+        ultima = max(0, (len(self._participantes) - 1) // POR_PAGINA)
+        self._pagina = min(self._pagina, ultima)
         inicio = self._pagina * POR_PAGINA
-        for nome in self._participantes[inicio : inicio + POR_PAGINA]:
+        for participante in self._participantes[inicio : inicio + POR_PAGINA]:
+            linha = tk.Frame(self._area_participantes, bg="#e8eaed")
+            linha.pack(fill=tk.X, pady=4)
+            if self._eh_organizador and participante.tipo != "organizador":
+                tk.Button(
+                    linha,
+                    text="×",
+                    width=3,
+                    command=partial(self._confirmar_remocao_participante, participante),
+                ).pack(side=tk.RIGHT, padx=(0, 6))
+            nome = participante.nome
+            if participante.tipo != "participante":
+                nome = f"{nome} ({participante.tipo})"
             tk.Label(
-                self._area_participantes,
+                linha,
                 text=f"👤  {nome}",
                 anchor="w",
                 bg="#e8eaed",
                 padx=12,
                 pady=10,
-            ).pack(fill=tk.X, pady=4)
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        ultima = (len(self._participantes) - 1) // POR_PAGINA
         self._botao_anterior.config(
             state=tk.NORMAL if self._pagina > 0 else tk.DISABLED
         )
         self._botao_proxima.config(
             state=tk.NORMAL if self._pagina < ultima else tk.DISABLED
         )
+
+    def _convidar_integrante(self) -> None:
+        email = simpledialog.askstring(
+            "Adicionar participante", "E-mail do viajante cadastrado", parent=self
+        )
+        if email is not None:
+            self._ao_convidar_integrante(email)
+
+    def _confirmar_remocao_participante(self, participante: ParticipanteGrupo) -> None:
+        mensagem = f'Deseja remover "{participante.nome}" do grupo?'
+        if participante.tipo == "participante":
+            mensagem += "\nOs acompanhantes desse participante também sairão do grupo."
+        if messagebox.askyesno(
+            "Remover do grupo", mensagem, default=messagebox.NO, parent=self
+        ):
+            self._ao_remover_participante(participante)
 
     def _pagina_anterior(self) -> None:
         self._pagina -= 1

@@ -16,7 +16,9 @@ class GrupoView(View):
 
         return valores_input
 
-    def exibe_grupo(self, nome: str, organizador: str, integrantes: list[dict]) -> str:
+    def exibe_grupo(
+        self, nome: str, organizador: str, integrantes: list[dict], *, eh_organizador: bool
+    ) -> str:
         print(f"\nGrupo: {nome}")
         print(f"Organizador: {organizador}")
         print("Participantes:")
@@ -26,8 +28,9 @@ class GrupoView(View):
         for numero, integrante in enumerate(integrantes, start=1):
             print(f"  {numero}. {integrante['nome']} - {integrante['email']}")
  
-        print("\n1 - Adicionar viajante")
-        print("2 - Selecionar participante")
+        if eh_organizador:
+            print("\n1 - Adicionar viajante")
+            print("2 - Selecionar participante")
         print("0 - Voltar")
         return input("Opção: ").strip()
  

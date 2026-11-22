@@ -42,9 +42,9 @@ class GrupoDAO:
             return session.get(GrupoRecord, grupo_id)
 
     def _buscar_para_alteracao(
-        self, session: Session, grupo_id: int, organizador_id: int
+        self, session: Session, grupo_id: int, organizador_id: int, *, bloquear: bool = True
     ) -> GrupoRecord:
-        grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
+        grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
         if grupo is None:
             raise ValueError("Grupo não encontrado.")
         if organizador_id is None or grupo.organizador_id != organizador_id:
@@ -71,25 +71,22 @@ class GrupoDAO:
             # list() força o carregamento dos integrantes antes de fechar a sessão
             return list(grupo.integrantes)
 
-    def _buscar_grupo_do_membro(
-        self, session: Session, grupo_id: int, viajante_id: int, *, bloquear: bool = False
-    ) -> tuple[GrupoRecord, set[int]]:
-        grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
-        if grupo is None:
-            raise ValueError("Grupo não encontrado.")
-
+    @staticmethod
+    def _ids_membros(grupo: GrupoRecord) -> set[int]:
         membros_ids = {integrante.id for integrante in grupo.integrantes}
         if grupo.organizador_id is not None:
             membros_ids.add(grupo.organizador_id)
-        if viajante_id not in membros_ids:
-            raise ValueError("Apenas membros do grupo podem acessar seus acompanhantes.")
-        return grupo, membros_ids
+        return membros_ids
 
     def listar_acompanhantes(
         self, grupo_id: int, viajante_id: int
     ) -> list[AcompanhanteRecord]:
         with SessionLocal() as session:
-            grupo, _ = self._buscar_grupo_do_membro(session, grupo_id, viajante_id)
+            grupo = session.get(GrupoRecord, grupo_id)
+            if grupo is None:
+                raise ValueError("Grupo não encontrado.")
+            if viajante_id not in self._ids_membros(grupo):
+                raise ValueError("Apenas membros do grupo podem acessar seus acompanhantes.")
             return sorted(grupo.acompanhantes, key=lambda a: (a.nome, a.id))
 
     def _consulta_acompanhantes_disponiveis(
@@ -101,11 +98,15 @@ class GrupoDAO:
         )
 
     def listar_acompanhantes_disponiveis(
-        self, grupo_id: int, viajante_id: int
+        self, grupo_id: int, organizador_id: int
     ) -> list[AcompanhanteRecord]:
         with SessionLocal() as session:
-            _, membros_ids = self._buscar_grupo_do_membro(session, grupo_id, viajante_id)
-            consulta = self._consulta_acompanhantes_disponiveis(grupo_id, membros_ids)
+            grupo = self._buscar_para_alteracao(
+                session, grupo_id, organizador_id, bloquear=False
+            )
+            consulta = self._consulta_acompanhantes_disponiveis(
+                grupo_id, self._ids_membros(grupo)
+            )
             consulta = consulta.options(
                 selectinload(AcompanhanteRecord.viajante_vinculado).load_only(
                     ViajanteRecord.nome
@@ -114,17 +115,17 @@ class GrupoDAO:
             return list(session.scalars(consulta))
 
     def adicionar_acompanhantes(
-        self, grupo_id: int, viajante_id: int, acompanhante_ids: list[int]
+        self, grupo_id: int, organizador_id: int, acompanhante_ids: list[int]
     ) -> None:
         ids = set(acompanhante_ids)
         if not ids:
             raise ValueError("Selecione pelo menos um acompanhante.")
 
         with SessionLocal() as session:
-            grupo, membros_ids = self._buscar_grupo_do_membro(
-                session, grupo_id, viajante_id, bloquear=True
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+            consulta = self._consulta_acompanhantes_disponiveis(
+                grupo_id, self._ids_membros(grupo)
             )
-            consulta = self._consulta_acompanhantes_disponiveis(grupo_id, membros_ids)
             acompanhantes = list(
                 session.scalars(consulta.where(AcompanhanteRecord.id.in_(ids)))
             )
@@ -137,19 +138,31 @@ class GrupoDAO:
             grupo.acompanhantes.extend(acompanhantes)
             session.commit()
  
-    def adicionar_integrante(self, grupo_id: int, email: str) -> ViajanteRecord:
-        return self.criar_convite(grupo_id, email).destinatario
+    def remover_acompanhante(
+        self, grupo_id: int, acompanhante_id: int, organizador_id: int
+    ) -> None:
+        with SessionLocal() as session:
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+            acompanhante = session.get(AcompanhanteRecord, acompanhante_id)
+            if acompanhante is None or acompanhante not in grupo.acompanhantes:
+                raise ValueError("O acompanhante não faz parte deste grupo.")
+
+            grupo.acompanhantes.remove(acompanhante)
+            session.commit()
+
+    def adicionar_integrante(
+        self, grupo_id: int, email: str, remetente_id: int
+    ) -> ViajanteRecord:
+        return self.criar_convite(grupo_id, email, remetente_id).destinatario
 
     def criar_convite(
         self,
         grupo_id: int,
         email: str,
-        remetente_id: int | None = None,
+        remetente_id: int,
     ) -> ConviteRecord:
         with SessionLocal() as session:
-            grupo = session.get(GrupoRecord, grupo_id)
-            if grupo is None:
-                raise ValueError("Grupo não encontrado.")
+            grupo = self._buscar_para_alteracao(session, grupo_id, remetente_id)
  
             viajante = session.scalar(
                 select(ViajanteRecord).where(ViajanteRecord.email == email)
@@ -170,16 +183,10 @@ class GrupoDAO:
             if convite_existente is not None:
                 raise ValueError("Já existe um convite pendente para este viajante.")
 
-            remetente = session.get(ViajanteRecord, remetente_id)
-            if remetente is None:
-                remetente = session.get(ViajanteRecord, grupo.organizador_id)
-            if remetente is None:
-                raise ValueError("O remetente do convite não foi encontrado.")
-
             convite = ConviteRecord(
                 grupo=grupo,
                 destinatario=viajante,
-                remetente=remetente,
+                remetente_id=remetente_id,
                 status="Pendente",
             )
             session.add(convite)
@@ -194,7 +201,7 @@ class GrupoDAO:
         self,
         grupo_id: int,
         email: str,
-        remetente_id: int | None = None,
+        remetente_id: int,
     ) -> ConviteRecord:
         return self.criar_convite(grupo_id, email, remetente_id)
 
@@ -245,12 +252,11 @@ class GrupoDAO:
             session.expunge_all()
             return convites
  
-    def remover_integrante(self, grupo_id: int, viajante_id: int) -> None:
+    def remover_integrante(
+        self, grupo_id: int, viajante_id: int, organizador_id: int
+    ) -> set[int]:
         with SessionLocal() as session:
-            grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
-            if grupo is None:
-                raise ValueError("Grupo não encontrado.")
- 
+            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
             if viajante_id == grupo.organizador_id:
                 raise ValueError("O organizador não pode ser excluído do grupo.")
  
@@ -258,8 +264,15 @@ class GrupoDAO:
             if viajante is None or viajante not in grupo.integrantes:
                 raise ValueError("O viajante não faz parte deste grupo.")
  
+            acompanhantes = [
+                a for a in grupo.acompanhantes if a.viajante_id == viajante_id
+            ]
+            ids_removidos = {acompanhante.id for acompanhante in acompanhantes}
+            for acompanhante in acompanhantes:
+                grupo.acompanhantes.remove(acompanhante)
             grupo.integrantes.remove(viajante)
             session.commit()
+            return ids_removidos
  
     def listar_por_organizador(self, organizador_id: int) -> list[GrupoRecord]:
         with SessionLocal() as session:

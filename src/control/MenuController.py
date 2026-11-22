@@ -8,7 +8,7 @@ from src.model.Acompanhante import Acompanhante
 from src.model.Viajante import Viajante
 from src.model.Grupo import Grupo
 from src.view.MenuView import MenuView
-from src.view.GrupoDetalheView import GrupoDetalheView
+from src.view.GrupoDetalheView import GrupoDetalheView, ParticipanteGrupo
 from src.control.AcompanhanteController import AcompanhanteController
 from src.control.GrupoController import GrupoController
 from src.exception.CampoInvalidoException import CampoInvalidoException
@@ -88,28 +88,73 @@ class MenuController:
         eh_organizador = (
             organizador is not None and organizador.id == self._viajante_logado.id
         )
-        nomes = [integrante.nome for integrante in grupo.integrantes]
-        if organizador is not None:
-            nomes.insert(0, f"{organizador.nome} (organizador)")
-        nomes.extend(self._nomes_acompanhantes(grupo.acompanhantes))
-
         self._tela.pack_forget()
         self._tela_grupo = GrupoDetalheView(
             self._root,
             nome_grupo=grupo.nome,
-            participantes=nomes,
+            participantes=self._participantes_do_grupo(grupo),
             eh_organizador=eh_organizador,
             ao_voltar=self._voltar_do_grupo,
             ao_renomear=lambda nome: self._editar_grupo(grupo.id, nome),
             ao_remover=lambda: self._remover_e_voltar(grupo.id),
+            ao_convidar_integrante=lambda email: self._convidar_integrante(grupo, email),
+            ao_remover_participante=lambda item: self._remover_participante(grupo, item),
             ao_adicionar_acompanhante=lambda: self._adicionar_acompanhantes(grupo),
             ao_abrir_itinerario=self._em_breve,
             ao_abrir_relatorio=self._em_breve,
         )
 
     @staticmethod
-    def _nomes_acompanhantes(acompanhantes: list[Acompanhante]) -> list[str]:
-        return [f"{acompanhante.nome} (acompanhante)" for acompanhante in acompanhantes]
+    def _itens_acompanhantes(acompanhantes: list[Acompanhante]) -> list[ParticipanteGrupo]:
+        return [ParticipanteGrupo(a.id, a.nome, "acompanhante") for a in acompanhantes]
+
+    def _participantes_do_grupo(self, grupo: Grupo) -> list[ParticipanteGrupo]:
+        organizador = grupo.organizador
+        participantes = [
+            ParticipanteGrupo(integrante.id, integrante.nome, "participante")
+            for integrante in grupo.integrantes
+            if organizador is None or integrante.id != organizador.id
+        ]
+        if organizador is not None:
+            participantes.insert(
+                0, ParticipanteGrupo(organizador.id, organizador.nome, "organizador")
+            )
+        return participantes + self._itens_acompanhantes(grupo.acompanhantes)
+
+    def _convidar_integrante(self, grupo: Grupo, email: str) -> None:
+        tela = self._tela_grupo
+        if tela is None:
+            return
+
+        try:
+            self._grupo_controller.convidar_integrante(grupo, email)
+        except (CampoInvalidoException, ValueError) as erro:
+            tela.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível enviar o convite.")
+            return
+
+        tela.mostrar_sucesso("Convite criado. O participante entrará no grupo após aceitar.")
+
+    def _remover_participante(self, grupo: Grupo, item: ParticipanteGrupo) -> None:
+        tela = self._tela_grupo
+        if tela is None or item.id is None or item.tipo == "organizador":
+            return
+
+        try:
+            if item.tipo == "acompanhante":
+                self._grupo_controller.remover_acompanhante(grupo, item.id)
+            else:
+                self._grupo_controller.remover_integrante(grupo, item.id)
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível remover do grupo.")
+            return
+
+        tela.atualizar_participantes(self._participantes_do_grupo(grupo))
 
     def _adicionar_acompanhantes(self, grupo: Grupo) -> None:
         tela = self._tela_grupo
@@ -135,7 +180,7 @@ class MenuController:
             if acompanhante.id in selecionados
         ]
         grupo.acompanhantes.extend(adicionados)
-        tela.adicionar_participantes(self._nomes_acompanhantes(adicionados))
+        tela.adicionar_participantes(self._itens_acompanhantes(adicionados))
         
     def _voltar_do_grupo(self) -> None:
         if self._tela_grupo is not None:
@@ -180,6 +225,9 @@ class MenuController:
             self._tela.mostrar_erro(str(e))
             return False
 
+        grupo = self._grupos_por_id.get(grupo_id)
+        if grupo is not None:
+            grupo.nome = nome
         self._tela.mostrar_sucesso("Grupo atualizado com sucesso.")
         return True
 

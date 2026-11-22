@@ -5,8 +5,6 @@ from src.DAOs.GrupoDAO import GrupoDAO
 from src.model.Acompanhante import Acompanhante
 from src.model.Grupo import Grupo
 from src.model.Viajante import Viajante
-from src.model.Convite import Convite
-from src.model.StatusConvite import StatusConvite
 from src.view.GrupoView import GrupoView
 from email_validator import validate_email, EmailNotValidError
 from src.util.email import enviar_email
@@ -105,24 +103,25 @@ class GrupoController:
 
         for email in emails:
             try:
-                registro = self._grupo_dao.criar_convite(
-                    grupo.id,
-                    email,
-                    self._organizador.id,
-                )
-                Convite(
-                    id=registro.id,
-                    destinatario=self._para_viajante(registro.destinatario),
-                    remetente=self._organizador,
-                    grupo=grupo,
-                    status=StatusConvite.PENDENTE,
-                )
-                enviar_email(self._organizador.nome, grupo.nome, email)
+                self._enviar_convite(grupo, email)
             except ValueError as e:
                 nao_adicionados.append(f"{email} ({e})")
                 continue
 
         return nao_adicionados
+
+    def _enviar_convite(self, grupo: Grupo, email: str) -> None:
+        self._grupo_dao.criar_convite(grupo.id, email, self._organizador.id)
+        enviar_email(self._organizador.nome, grupo.nome, email)
+
+    def convidar_integrante(self, grupo: Grupo, email: str) -> None:
+        email = email.strip().lower()
+        try:
+            validate_email(email, check_deliverability=False)
+        except EmailNotValidError as erro:
+            raise CampoInvalidoException("Informe um e-mail válido.") from erro
+
+        self._enviar_convite(grupo, email)
 
     def _eh_organizador(self, grupo: Grupo) -> bool:
         return (
@@ -143,7 +142,8 @@ class GrupoController:
                 {"id": r.id, "nome": r.nome, "email": r.email} for r in registros
             ]
             opcao = self._tela.exibe_grupo(
-                grupo.nome, grupo.organizador.nome, integrantes
+                grupo.nome, grupo.organizador.nome, integrantes,
+                eh_organizador=self._eh_organizador(grupo),
             )
 
             if opcao == "0":  # Voltar tela anterior
@@ -166,31 +166,9 @@ class GrupoController:
             )
             return False
 
-        email = self._tela.solicita_email()
-
         try:
-            validate_email(email)
-        except EmailNotValidError:
-            self._tela.mostra_mensagem(
-                "e-mail inserido é inválido - Por favor insira um endereço válido."
-            )
-            return False
-
-        try:
-            registro = self._grupo_dao.criar_convite(
-                grupo.id,
-                email,
-                self._organizador.id,
-            )
-            Convite(
-                id=registro.id,
-                destinatario=self._para_viajante(registro.destinatario),
-                remetente=self._organizador,
-                grupo=grupo,
-                status=StatusConvite.PENDENTE,
-            )
-            enviar_email(self._organizador.nome, grupo.nome, email)
-        except ValueError as e:
+            self.convidar_integrante(grupo, self._tela.solicita_email())
+        except (CampoInvalidoException, ValueError) as e:
             self._tela.mostra_mensagem(str(e))
             return False
 
@@ -256,14 +234,30 @@ class GrupoController:
             return False
 
         try:
-            self._grupo_dao.remover_integrante(grupo.id, escolhido["id"])
+            self.remover_integrante(grupo, escolhido["id"])
         except ValueError as e:
             self._tela.mostra_mensagem(str(e))
             return False
 
-        grupo.integrantes[:] = [i for i in grupo.integrantes if i.id != escolhido["id"]]
         self._tela.mostra_mensagem("Usuário excluído do grupo.")
         return True
+
+    def remover_integrante(self, grupo: Grupo, viajante_id: int) -> None:
+        acompanhantes_removidos = self._grupo_dao.remover_integrante(
+            grupo.id, viajante_id, self._organizador.id
+        )
+        grupo.integrantes[:] = [i for i in grupo.integrantes if i.id != viajante_id]
+        grupo.acompanhantes[:] = [
+            a for a in grupo.acompanhantes if a.id not in acompanhantes_removidos
+        ]
+
+    def remover_acompanhante(self, grupo: Grupo, acompanhante_id: int) -> None:
+        self._grupo_dao.remover_acompanhante(
+            grupo.id, acompanhante_id, self._organizador.id
+        )
+        grupo.acompanhantes[:] = [
+            a for a in grupo.acompanhantes if a.id != acompanhante_id
+        ]
 
     # ---------- GRUPOS DO ORGANIZADOR ----------
 
