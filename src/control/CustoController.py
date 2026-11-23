@@ -1,8 +1,12 @@
-# UC14: Dividir custos da viagem entre membros do grupo (Implementado por Sarah Meireles)
-
 from src.DAOs.CustoDAO import CustoDAO
 from src.model.Grupo import Grupo
 
+'''
+User Cases implementados neste arquivo
+
+Sarah Meireles
+UC14: Dividir custos de viagem entre membros do grupo
+'''
 
 class CustoController:
     def __init__(self) -> None:

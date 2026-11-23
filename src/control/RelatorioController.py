@@ -1,9 +1,13 @@
-# UC15: Emitir relatório de viagem (Implementado por Sarah Meireles)
-
 from src.control.CustoController import CustoController
 from src.control.ItinerarioController import ItinerarioController
 from src.model.Grupo import Grupo
 
+'''
+User Cases implementados neste arquivo
+
+Sarah Meireles
+UC15: Emitir relatório da viagem
+'''
 
 class RelatorioController:
     def __init__(self) -> None:
