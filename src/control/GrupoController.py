@@ -1,4 +1,6 @@
 from collections.abc import Callable
+from __future__ import annotations
+from typing import TYPE_CHECKING
 
 from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.DAOs.GrupoDAO import GrupoDAO
@@ -8,6 +10,9 @@ from src.model.Viajante import Viajante
 from src.view.GrupoView import GrupoView
 from email_validator import validate_email, EmailNotValidError
 from src.util.email import enviar_email
+
+if TYPE_CHECKING:
+    from src.persistence.models import GrupoRecord, ViajanteRecord
 
 class GrupoController:
 
@@ -86,7 +91,7 @@ class GrupoController:
 
     # UC06: Convidar, visualizar e excluir viajantes (Implementado por Gustavo de Pinho)
 
-    def _para_viajante(self, registro) -> Viajante:
+    def _para_viajante(self, registro: ViajanteRecord) -> Viajante:
         return Viajante(
             id=registro.id,
             nome=registro.nome,
@@ -341,7 +346,7 @@ class GrupoController:
         
     # UC07: Visualizar grupos de viagem (Implementado por Sarah Meireles)
     
-    def _para_grupo(self, registro) -> Grupo:
+    def _para_grupo(self, registro: GrupoRecord) -> Grupo:
         eh_organizador = registro.organizador_id == self._organizador.id
         if eh_organizador:
             organizador = self._organizador
