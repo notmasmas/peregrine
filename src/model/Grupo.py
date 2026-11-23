@@ -43,6 +43,10 @@ class Grupo:
     def nome(self) -> str:
         return self._nome
 
+    @nome.setter
+    def nome(self, value: str) -> None:
+        self._nome = value
+
     @property
     def organizador(self) -> Viajante | None:
         return self._organizador

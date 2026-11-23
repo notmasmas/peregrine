@@ -5,6 +5,12 @@ from src.control.ViajanteController import ViajanteController
 from src.model.Viajante import Viajante
 from src.view.InicioView import InicioView
 
+'''
+User Cases implementados neste arquivo
+
+Maria Helena Melo
+UC02: Efetuar login
+'''
 
 class InicioController:
     def __init__(self, root: tk.Tk) -> None:

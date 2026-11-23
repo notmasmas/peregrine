@@ -1,0 +1,4115 @@
+diff --git a/.env.example b/.env.example
+index 59f9289..1cbdc9a 100644
+--- a/.env.example
++++ b/.env.example
+@@ -4,4 +4,9 @@ POSTGRES_DB=
+ POSTGRES_HOST=
+ POSTGRES_PORT=
+ PGADMIN_EMAIL=
+-PGADMIN_PASSWORD=
+\ No newline at end of file
++PGADMIN_PASSWORD=
++SENDER_EMAIL= #só é necessário se a flag habilitar_email for True na util de e-mail
++
++#só é necessário se a flag habilitar_email for True na util de e-mail. 
++#No G-mail essa credencial se chama Google App Password (precisa de 2FA habilitado na conta). Colar no .env sem os espaços entre as caracteres
++SENDER_CREDENTIAL=
+\ No newline at end of file
+diff --git a/.gitignore b/.gitignore
+index 4118953..490f4d6 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,4 @@
+ .idea/
+ **/__pycache__
+-.env
+\ No newline at end of file
++.env
++.venv
+\ No newline at end of file
+diff --git a/.vscode/settings.json b/.vscode/settings.json
+new file mode 100644
+index 0000000..1e26040
+--- /dev/null
++++ b/.vscode/settings.json
+@@ -0,0 +1,3 @@
++{
++    "python.terminal.useEnvFile": true
++}
+\ No newline at end of file
+diff --git a/main.py b/main.py
+index 332fc83..00a3986 100644
+--- a/main.py
++++ b/main.py
+@@ -1,5 +1,29 @@
++import tkinter as tk
+ from src.control.InicioController import InicioController
+ 
++'''
++Gustavo de Pinho
++UC04: Editar e remover grupos de viagem
++UC06: Convidar, visualizar e excluir viajantes
++UC10: Adicionar acompanhante ao grupo de viagem
++UC12: Sugerir mudanças no itinerário
++UC13: Aprovar sugestão de alteração
++
++Maria Helena Melo
++UC02: Efetuar login
++UC03: Criar grupo de viagem
++UC05: Entrar ou sair de um grupo de viagem
++UC08: Enviar notificação de convite de um grupo por e-mail
++UC09: Vincular acompanhante à conta
++UC11: Criar e alterar itinerário de viagem
++
++Sarah
++UC01: Cadastrar viajantes
++UC07: Visualizar grupos de viagem
++UC14: Dividir custos de viagem entre membros do grupo
++UC15: Emitir relatório da viagem
++'''
++
+ 
+ def initialize_database() -> None:
+     from src.database import Base, engine
+@@ -9,7 +33,12 @@ def initialize_database() -> None:
+ 
+ def main() -> None:
+     initialize_database()
+-    InicioController().iniciar()
++    root = tk.Tk()
++    root.title("Peregrine")
++    root.geometry("420x480")
++    root.minsize(360, 420)
++    InicioController(root)
++    root.mainloop()
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/src/DAOs/AcompanhanteDAO.py b/src/DAOs/AcompanhanteDAO.py
+new file mode 100644
+index 0000000..8c3969c
+--- /dev/null
++++ b/src/DAOs/AcompanhanteDAO.py
+@@ -0,0 +1,40 @@
++from sqlalchemy import select
++
++from src.database import SessionLocal
++from src.model.Acompanhante import Acompanhante
++from src.persistence.models import AcompanhanteRecord, ViajanteRecord
++
++class AcompanhanteDAO:
++    def criar(self, acompanhante: Acompanhante) -> AcompanhanteRecord:
++        viajante_vinculado = acompanhante.viajante_vinculado
++        if viajante_vinculado is None:
++            raise ValueError("O acompanhante precisa ter um responsável.")
++
++        with SessionLocal() as session:
++            viajante_responsavel = session.get(
++                ViajanteRecord, viajante_vinculado.id
++            )
++            if viajante_responsavel is None:
++                raise ValueError("O organizador não está cadastrado no banco de dados.")
++
++            registro = AcompanhanteRecord(
++                nome=acompanhante.nome,
++                viajante_vinculado=viajante_responsavel,
++            )
++            session.add(registro)
++            session.commit()
++            session.refresh(registro)
++            acompanhante.id = registro.id
++            return registro
++
++    def listar_por_viajante_id(self, viajante_id: int) -> list[Acompanhante]:
++        with SessionLocal() as session:
++            registros = session.scalars(
++                select(AcompanhanteRecord)
++                .where(AcompanhanteRecord.viajante_id == viajante_id)
++                .order_by(AcompanhanteRecord.nome)
++            ).all()
++            return [
++                Acompanhante(id=registro.id, nome=registro.nome)
++                for registro in registros
++            ]
+\ No newline at end of file
+diff --git a/src/DAOs/CustoDAO.py b/src/DAOs/CustoDAO.py
+new file mode 100644
+index 0000000..0a7afce
+--- /dev/null
++++ b/src/DAOs/CustoDAO.py
+@@ -0,0 +1,24 @@
++# UC14: Dividir custos da viagem entre membros do grupo (Implementado por Sarah Meireles)
++
++from sqlalchemy import select
++
++from src.database import SessionLocal
++from src.persistence.models import AcompanhanteRecord, grupos_acompanhantes
++
++
++class CustoDAO:
++    def listar_responsaveis_acompanhantes(self, grupo_id: int) -> list[int]:
++        with SessionLocal() as session:
++            return list(
++                session.scalars(
++                    select(AcompanhanteRecord.viajante_id)
++                    .join(
++                        grupos_acompanhantes,
++                        grupos_acompanhantes.c.acompanhante_id == AcompanhanteRecord.id,
++                    )
++                    .where(
++                        grupos_acompanhantes.c.grupo_id == grupo_id,
++                        AcompanhanteRecord.viajante_id.is_not(None),
++                    )
++                )
++            )
+\ No newline at end of file
+diff --git a/src/DAOs/GrupoDAO.py b/src/DAOs/GrupoDAO.py
+index 95153e7..0ee6517 100644
+--- a/src/DAOs/GrupoDAO.py
++++ b/src/DAOs/GrupoDAO.py
+@@ -1,8 +1,14 @@
+-from sqlalchemy import select
++from sqlalchemy import Select, select
++from sqlalchemy.orm import Session, selectinload
+ 
+ from src.database import SessionLocal
+ from src.model.Grupo import Grupo
+-from src.persistence.models import GrupoRecord, ViajanteRecord
++from src.persistence.models import (
++    AcompanhanteRecord,
++    ConviteRecord,
++    GrupoRecord,
++    ViajanteRecord,
++)
+ 
+ # Implementado por Maria Helena Melo
+ 
+@@ -35,6 +41,34 @@ class GrupoDAO:
+         with SessionLocal() as session:
+             return session.get(GrupoRecord, grupo_id)
+ 
++    def _buscar_grupo(
++        self, session: Session, grupo_id: int, *, bloquear: bool = False
++    ) -> GrupoRecord:
++        grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
++        if grupo is None:
++            raise ValueError("Grupo não encontrado.")
++        return grupo
++
++    def _buscar_para_alteracao(
++        self, session: Session, grupo_id: int, organizador_id: int
++    ) -> GrupoRecord:
++        grupo = self._buscar_grupo(session, grupo_id, bloquear=True)
++        if organizador_id is None or grupo.organizador_id != organizador_id:
++            raise ValueError("Apenas o organizador pode alterar este grupo.")
++        return grupo
++
++    def atualizar_nome(self, grupo_id: int, organizador_id: int, nome: str) -> None:
++        with SessionLocal() as session:
++            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
++            grupo.nome = nome
++            session.commit()
++
++    def remover(self, grupo_id: int, organizador_id: int) -> None:
++        with SessionLocal() as session:
++            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
++            session.delete(grupo)
++            session.commit()
++
+     def listar_integrantes(self, grupo_id: int) -> list[ViajanteRecord]:
+         with SessionLocal() as session:
+             grupo = session.get(GrupoRecord, grupo_id)
+@@ -42,12 +76,96 @@ class GrupoDAO:
+                 raise ValueError("Grupo não encontrado.")
+             # list() força o carregamento dos integrantes antes de fechar a sessão
+             return list(grupo.integrantes)
++
++    @staticmethod
++    def _ids_membros(grupo: GrupoRecord) -> set[int]:
++        membros_ids = {integrante.id for integrante in grupo.integrantes}
++        if grupo.organizador_id is not None:
++            membros_ids.add(grupo.organizador_id)
++        return membros_ids
++
++    def listar_acompanhantes(
++        self, grupo_id: int, viajante_id: int
++    ) -> list[AcompanhanteRecord]:
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo(session, grupo_id)
++            if viajante_id not in self._ids_membros(grupo):
++                raise ValueError("Apenas membros do grupo podem acessar seus acompanhantes.")
++            return sorted(grupo.acompanhantes, key=lambda a: (a.nome, a.id))
++
++    def _consulta_acompanhantes_disponiveis(
++        self, grupo: GrupoRecord, viajante_id: int
++    ) -> Select[tuple[AcompanhanteRecord]]:
++        membros_ids = self._ids_membros(grupo)
++        if viajante_id not in membros_ids:
++            raise ValueError("Apenas membros do grupo podem adicionar acompanhantes.")
++
++        responsaveis_ids = membros_ids if viajante_id == grupo.organizador_id else {viajante_id}
++        return select(AcompanhanteRecord).where(
++            AcompanhanteRecord.viajante_id.in_(responsaveis_ids),
++            ~AcompanhanteRecord.grupos.any(GrupoRecord.id == grupo.id),
++        )
++
++    def listar_acompanhantes_disponiveis(
++        self, grupo_id: int, viajante_id: int
++    ) -> list[AcompanhanteRecord]:
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo(session, grupo_id)
++            consulta = self._consulta_acompanhantes_disponiveis(grupo, viajante_id)
++            consulta = consulta.options(
++                selectinload(AcompanhanteRecord.viajante_vinculado).load_only(
++                    ViajanteRecord.nome
++                )
++            ).order_by(AcompanhanteRecord.nome, AcompanhanteRecord.id)
++            return list(session.scalars(consulta))
++
++    def adicionar_acompanhantes(
++        self, grupo_id: int, viajante_id: int, acompanhante_ids: list[int]
++    ) -> None:
++        ids = set(acompanhante_ids)
++        if not ids:
++            raise ValueError("Selecione pelo menos um acompanhante.")
++
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo(session, grupo_id, bloquear=True)
++            consulta = self._consulta_acompanhantes_disponiveis(grupo, viajante_id)
++            acompanhantes = list(
++                session.scalars(consulta.where(AcompanhanteRecord.id.in_(ids)))
++            )
++            if len(acompanhantes) != len(ids):
++                raise ValueError(
++                    "A seleção contém acompanhantes que já estão no grupo "
++                    "ou que você não tem permissão para adicionar."
++                )
++
++            grupo.acompanhantes.extend(acompanhantes)
++            session.commit()
+  
+-    def adicionar_integrante(self, grupo_id: int, email: str) -> ViajanteRecord:
++    def remover_acompanhante(
++        self, grupo_id: int, acompanhante_id: int, organizador_id: int
++    ) -> None:
+         with SessionLocal() as session:
+-            grupo = session.get(GrupoRecord, grupo_id)
+-            if grupo is None:
+-                raise ValueError("Grupo não encontrado.")
++            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
++            acompanhante = session.get(AcompanhanteRecord, acompanhante_id)
++            if acompanhante is None or acompanhante not in grupo.acompanhantes:
++                raise ValueError("O acompanhante não faz parte deste grupo.")
++
++            grupo.acompanhantes.remove(acompanhante)
++            session.commit()
++
++    def adicionar_integrante(
++        self, grupo_id: int, email: str, remetente_id: int
++    ) -> ViajanteRecord:
++        return self.criar_convite(grupo_id, email, remetente_id).destinatario
++
++    def criar_convite(
++        self,
++        grupo_id: int,
++        email: str,
++        remetente_id: int,
++    ) -> ConviteRecord:
++        with SessionLocal() as session:
++            grupo = self._buscar_para_alteracao(session, grupo_id, remetente_id)
+  
+             viajante = session.scalar(
+                 select(ViajanteRecord).where(ViajanteRecord.email == email)
+@@ -58,17 +176,90 @@ class GrupoDAO:
+             if viajante.id == grupo.organizador_id or viajante in grupo.integrantes:
+                 raise ValueError("Este viajante já faz parte do grupo.")
+  
+-            grupo.integrantes.append(viajante)
++            convite_existente = session.scalar(
++                select(ConviteRecord).where(
++                    ConviteRecord.grupo_id == grupo_id,
++                    ConviteRecord.destinatario_id == viajante.id,
++                    ConviteRecord.status == "Pendente",
++                )
++            )
++            if convite_existente is not None:
++                raise ValueError("Já existe um convite pendente para este viajante.")
++
++            convite = ConviteRecord(
++                grupo=grupo,
++                destinatario=viajante,
++                remetente_id=remetente_id,
++                status="Pendente",
++            )
++            session.add(convite)
+             session.commit()
+-            session.refresh(viajante)
+-            return viajante
+- 
+-    def remover_integrante(self, grupo_id: int, viajante_id: int) -> None:
++            session.refresh(convite)
++            # Mantém os dados do destinatário disponíveis depois de fechar a sessão.
++            _ = convite.destinatario
++            session.expunge(convite)
++            return convite
++
++    def convidar_integrante(
++        self,
++        grupo_id: int,
++        email: str,
++        remetente_id: int,
++    ) -> ConviteRecord:
++        return self.criar_convite(grupo_id, email, remetente_id)
++
++    def aceitar_convite(self, convite_id: int, destinatario_id: int) -> None:
+         with SessionLocal() as session:
+-            grupo = session.get(GrupoRecord, grupo_id)
+-            if grupo is None:
+-                raise ValueError("Grupo não encontrado.")
++            convite = session.get(ConviteRecord, convite_id)
++            if convite is None:
++                raise ValueError("Convite não encontrado.")
++            if convite.destinatario_id != destinatario_id:
++                raise ValueError("Este convite pertence a outro viajante.")
++            if convite.status != "Pendente":
++                raise ValueError("Este convite não está mais pendente.")
++
++            grupo = session.get(GrupoRecord, convite.grupo_id)
++            destinatario = session.get(ViajanteRecord, convite.destinatario_id)
++            if grupo is None or destinatario is None:
++                raise ValueError("Não foi possível aceitar o convite.")
++            if destinatario not in grupo.integrantes:
++                grupo.integrantes.append(destinatario)
++            convite.status = "Aceito"
++            session.commit()
++
++    def rejeitar_convite(self, convite_id: int, destinatario_id: int) -> None:
++        with SessionLocal() as session:
++            convite = session.get(ConviteRecord, convite_id)
++            if convite is None:
++                raise ValueError("Convite não encontrado.")
++            if convite.destinatario_id != destinatario_id:
++                raise ValueError("Este convite pertence a outro viajante.")
++            if convite.status != "Pendente":
++                raise ValueError("Este convite não está mais pendente.")
++            convite.status = "Rejeitado"
++            session.commit()
++
++    def listar_convites_pendentes(self, destinatario_id: int) -> list[ConviteRecord]:
++        with SessionLocal() as session:
++            convites = list(
++                session.scalars(
++                    select(ConviteRecord).where(
++                        ConviteRecord.destinatario_id == destinatario_id,
++                        ConviteRecord.status == "Pendente",
++                    )
++                )
++            )
++            for convite in convites:
++                _ = convite.grupo
++                _ = convite.remetente
++            session.expunge_all()
++            return convites
+  
++    def remover_integrante(
++        self, grupo_id: int, viajante_id: int, organizador_id: int
++    ) -> set[int]:
++        with SessionLocal() as session:
++            grupo = self._buscar_para_alteracao(session, grupo_id, organizador_id)
+             if viajante_id == grupo.organizador_id:
+                 raise ValueError("O organizador não pode ser excluído do grupo.")
+  
+@@ -76,8 +267,39 @@ class GrupoDAO:
+             if viajante is None or viajante not in grupo.integrantes:
+                 raise ValueError("O viajante não faz parte deste grupo.")
+  
++            acompanhantes = [
++                a for a in grupo.acompanhantes if a.viajante_id == viajante_id
++            ]
++            ids_removidos = {acompanhante.id for acompanhante in acompanhantes}
++            for acompanhante in acompanhantes:
++                grupo.acompanhantes.remove(acompanhante)
+             grupo.integrantes.remove(viajante)
+             session.commit()
++            return ids_removidos
++
++    def sair_do_grupo(self, grupo_id: int, viajante_id: int) -> set[int]:
++        with SessionLocal() as session:
++            grupo = session.get(GrupoRecord, grupo_id, with_for_update=True)
++            if grupo is None:
++                raise ValueError("Grupo não encontrado.")
++            if grupo.organizador_id == viajante_id:
++                raise ValueError("O organizador não pode sair do próprio grupo.")
++
++            viajante = session.get(ViajanteRecord, viajante_id)
++            if viajante is None or viajante not in grupo.integrantes:
++                raise ValueError("Você não faz parte deste grupo.")
++
++            acompanhantes = [
++                acompanhante
++                for acompanhante in grupo.acompanhantes
++                if acompanhante.viajante_id == viajante_id
++            ]
++            ids_removidos = {acompanhante.id for acompanhante in acompanhantes}
++            for acompanhante in acompanhantes:
++                grupo.acompanhantes.remove(acompanhante)
++            grupo.integrantes.remove(viajante)
++            session.commit()
++            return ids_removidos
+  
+     def listar_por_organizador(self, organizador_id: int) -> list[GrupoRecord]:
+         with SessionLocal() as session:
+@@ -85,6 +307,26 @@ class GrupoDAO:
+                 session.scalars(
+                     select(GrupoRecord)
+                     .where(GrupoRecord.organizador_id == organizador_id)
++                    .options(
++                        selectinload(GrupoRecord.organizador),
++                        selectinload(GrupoRecord.integrantes),
++                        # selectinload busca organizador e integrantes e guarda no GrupoRecord antes da conexão com o banco fechar
++                    )
+                     .order_by(GrupoRecord.id)
+                 )
+-            )
+\ No newline at end of file
++            )
++            
++    def listar_por_participante(self, viajante_id: int) -> list[GrupoRecord]:
++        with SessionLocal() as session:
++            return list(
++                session.scalars(
++                    select(GrupoRecord)
++                    .join(GrupoRecord.integrantes)
++                    .where(ViajanteRecord.id == viajante_id)
++                    .options(
++                        selectinload(GrupoRecord.organizador),
++                        selectinload(GrupoRecord.integrantes),
++                    )
++                    .order_by(GrupoRecord.id)
++                )
++            )
+diff --git a/src/DAOs/ItinerarioDAO.py b/src/DAOs/ItinerarioDAO.py
+new file mode 100644
+index 0000000..779e942
+--- /dev/null
++++ b/src/DAOs/ItinerarioDAO.py
+@@ -0,0 +1,300 @@
++from datetime import date
++import math
++
++from sqlalchemy import select, delete, func
++from sqlalchemy.orm import Session
++
++from src.database import SessionLocal
++from src.persistence.models import (
++    GrupoRecord,
++    ItinerarioRecord,
++    ReservaRecord,
++)
++
++
++class ItinerarioDAO:
++    @staticmethod
++    def _buscar_grupo(
++        session: Session, grupo_id: int, *, bloquear: bool = False
++    ) -> GrupoRecord:
++        grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
++        if grupo is None:
++            raise ValueError("Grupo não encontrado.")
++        return grupo
++
++    def _buscar_grupo_do_organizador(
++        self, session: Session, grupo_id: int, viajante_id: int, *, bloquear: bool = False
++    ) -> GrupoRecord:
++        grupo = self._buscar_grupo(session, grupo_id, bloquear=bloquear)
++        if viajante_id is None or grupo.organizador_id != viajante_id:
++            raise ValueError("Apenas o organizador pode realizar esta ação.")
++        return grupo
++
++    def listar_programacao(self, grupo_id: int) -> dict:
++        with SessionLocal() as session:
++            itinerario = session.scalar(
++                select(ItinerarioRecord).where(
++                    ItinerarioRecord.grupo_id == grupo_id
++                )
++            )
++            if itinerario is None:
++                return {}
++            programacao = itinerario.programacao
++            if not isinstance(programacao, dict):
++                raise ValueError("A programação do itinerário está inválida.")
++            return dict(programacao)
++
++    def adicionar_dia(
++        self,
++        grupo_id: int,
++        viajante_id: int,
++        data: date,
++        cidade: str,
++        passeio: str,
++        reservas: list[tuple[str, float, int]],
++    ) -> None:
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo_do_organizador(
++                session, grupo_id, viajante_id, bloquear=True
++            )
++            self._validar_reservas(grupo, reservas)
++
++            itinerario = session.scalar(
++                select(ItinerarioRecord)
++                .where(ItinerarioRecord.grupo_id == grupo_id)
++                .with_for_update()
++            )
++            if itinerario is None:
++                itinerario = ItinerarioRecord(grupo_id=grupo_id)
++                session.add(itinerario)
++                session.flush()
++
++            if not isinstance(itinerario.programacao, dict):
++                raise ValueError("A programação do itinerário está inválida.")
++            programacao = dict(itinerario.programacao)
++            data_iso = data.isoformat()
++            if data_iso in programacao:
++                raise ValueError("Já existe um dia cadastrado para esta data.")
++
++            programacao[data_iso] = {"cidade": cidade, "passeio": passeio}
++            itinerario.programacao = programacao
++            if itinerario.data_inicial is None or data < itinerario.data_inicial:
++                itinerario.data_inicial = data
++
++            for nome, preco, titular_id in reservas:
++                session.add(
++                    ReservaRecord(
++                        nome=nome,
++                        preco=preco,
++                        titular_id=titular_id,
++                        itinerario_id=itinerario.id,
++                        data=data,
++                    )
++                )
++            self._recalcular_total(session, itinerario)
++            session.commit()
++
++    def editar_dia(
++        self,
++        grupo_id: int,
++        viajante_id: int,
++        data_original: date,
++        data_nova: date,
++        cidade: str,
++        passeio: str,
++        reservas: list[tuple[str, float, int]],
++    ) -> None:
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo_do_organizador(
++                session, grupo_id, viajante_id, bloquear=True
++            )
++            self._validar_reservas(grupo, reservas)
++
++            itinerario = session.scalar(
++                select(ItinerarioRecord)
++                .where(ItinerarioRecord.grupo_id == grupo_id)
++                .with_for_update()
++            )
++            if itinerario is None or not isinstance(itinerario.programacao, dict):
++                raise ValueError("Itinerário não encontrado.")
++
++            programacao = dict(itinerario.programacao)
++            data_original_iso = data_original.isoformat()
++            data_nova_iso = data_nova.isoformat()
++            detalhes = programacao.get(data_original_iso)
++            if not isinstance(detalhes, dict):
++                raise ValueError("O dia selecionado não foi encontrado.")
++            if data_nova_iso != data_original_iso and data_nova_iso in programacao:
++                raise ValueError("Já existe um dia cadastrado para esta data.")
++
++            del programacao[data_original_iso]
++            programacao[data_nova_iso] = {
++                **detalhes,
++                "cidade": cidade,
++                "passeio": passeio,
++            }
++            itinerario.programacao = programacao
++            itinerario.data_inicial = min(
++                date.fromisoformat(data) for data in programacao
++            )
++            
++            session.execute(
++                delete(ReservaRecord).where(
++                    ReservaRecord.itinerario_id == itinerario.id,
++                    ReservaRecord.data == data_original,
++                )
++            )
++
++            for nome, preco, titular_id in reservas:
++                session.add(
++                    ReservaRecord(
++                        nome=nome,
++                        preco=preco,
++                        titular_id=titular_id,
++                        itinerario_id=itinerario.id,
++                        data=data_nova,
++                    )
++                )
++            self._recalcular_total(session, itinerario)
++            session.commit()
++
++    def remover_dias(
++        self, grupo_id: int, viajante_id: int, datas: set[date]
++    ) -> None:
++        with SessionLocal() as session:
++            self._buscar_grupo_do_organizador(
++                session, grupo_id, viajante_id, bloquear=True
++            )
++            itinerario = session.scalar(
++                select(ItinerarioRecord)
++                .where(ItinerarioRecord.grupo_id == grupo_id)
++                .with_for_update()
++            )
++            if itinerario is None:
++                raise ValueError("Itinerário não encontrado.")
++            if not isinstance(itinerario.programacao, dict):
++                raise ValueError("A programação do itinerário está inválida.")
++
++            programacao = dict(itinerario.programacao)
++            datas_iso = {data.isoformat() for data in datas}
++            if not datas_iso.issubset(programacao):
++                raise ValueError("Um dos dias selecionados não foi encontrado.")
++            for data in datas_iso:
++                del programacao[data]
++
++            itinerario.programacao = programacao
++            itinerario.data_inicial = (
++                min(date.fromisoformat(data) for data in programacao)
++                if programacao
++                else None
++            )
++            
++            session.execute(
++                delete(ReservaRecord).where(
++                    ReservaRecord.itinerario_id == itinerario.id,
++                    ReservaRecord.data.in_(datas),
++                )
++            )
++            self._recalcular_total(session, itinerario)
++            session.commit()
++
++    def sugerir_dia(
++        self,
++        grupo_id: int,
++        viajante_id: int,
++        data: date,
++        cidade: str,
++        passeio: str,
++        reservas: list[tuple[str, float, int]],
++    ) -> None:
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo(session, grupo_id, bloquear=True)
++            autor = next(
++                (membro for membro in grupo.integrantes if membro.id == viajante_id), None
++            )
++            if autor is None or grupo.organizador_id == viajante_id:
++                raise ValueError("Apenas participantes do grupo podem enviar sugestões.")
++
++            titulares = self._validar_reservas(grupo, reservas)
++            sugestao = {
++                "autor": autor.nome,
++                "data": data.isoformat(),
++                "cidade": cidade,
++                "passeio": passeio,
++                "reservas": [
++                    {"nome": nome, "preco": preco, "titular": titulares[titular_id]}
++                    for nome, preco, titular_id in reservas
++                ],
++            }
++            sugestoes = self._sugestoes_itinerario(grupo)
++            grupo.sugestoes = {
++                **(grupo.sugestoes or {}),
++                "itinerario": [*sugestoes, sugestao],
++            }
++            session.commit()
++
++    def listar_sugestoes(self, grupo_id: int, viajante_id: int) -> list[dict]:
++        with SessionLocal() as session:
++            grupo = self._buscar_grupo_do_organizador(session, grupo_id, viajante_id)
++            return list(reversed(self._sugestoes_itinerario(grupo)))
++
++    @staticmethod
++    def _sugestoes_itinerario(grupo: GrupoRecord) -> list[dict]:
++        sugestoes = grupo.sugestoes or {}
++        if not isinstance(sugestoes, dict):
++            raise ValueError("As sugestões do grupo estão inválidas.")
++        itinerarios = sugestoes.get("itinerario", [])
++        if not isinstance(itinerarios, list):
++            raise ValueError("As sugestões de itinerário estão inválidas.")
++        return itinerarios
++
++    @staticmethod
++    def _validar_reservas(
++        grupo: GrupoRecord, reservas: list[tuple[str, float, int]]
++    ) -> dict[int, str]:
++        if not reservas:
++            return {}
++
++        titulares = {integrante.id: integrante.nome for integrante in grupo.integrantes}
++        if grupo.organizador is not None:
++            titulares[grupo.organizador.id] = grupo.organizador.nome
++        for nome, preco, titular_id in reservas:
++            if not nome.strip():
++                raise ValueError("Informe o nome de todas as reservas.")
++            if not math.isfinite(preco) or preco < 0:
++                raise ValueError("Informe um preço válido para cada reserva.")
++            if titular_id not in titulares:
++                raise ValueError("O titular da reserva deve ser um participante do grupo.")
++        return titulares
++            
++    # UC14: Dividir custos da viagem entre membros do grupo (Implementado por Sarah Meireles)
++    @staticmethod
++    def _recalcular_total(session, itinerario: ItinerarioRecord) -> None:
++        session.flush() # enviar comandos SQL pendentes para o banco
++        itinerario.valor_total = session.scalar(
++            select(func.coalesce(func.sum(ReservaRecord.preco), 0.0)).where(
++                ReservaRecord.itinerario_id == itinerario.id
++            )
++        )
++    
++    def listar_reservas_por_dia(self, grupo_id: int) -> dict[str, list[dict]]:
++        with SessionLocal() as session:
++            reservas = session.scalars(
++                select(ReservaRecord)
++                .join(ItinerarioRecord, ReservaRecord.itinerario_id == ItinerarioRecord.id)
++                .where(
++                    ItinerarioRecord.grupo_id == grupo_id,
++                    ReservaRecord.data.is_not(None)
++                )
++                .order_by(ReservaRecord.id)
++            )
++            resultado: dict[str, list[dict]] = {}
++            for reserva in reservas:
++                resultado.setdefault(reserva.data.isoformat(), []).append(
++                    {
++                        "nome": reserva.nome,
++                        "preco": reserva.preco,
++                        "titular_id": reserva.titular_id,
++                    }
++                )
++            return resultado
+diff --git a/src/control/AcompanhanteController.py b/src/control/AcompanhanteController.py
+new file mode 100644
+index 0000000..5377414
+--- /dev/null
++++ b/src/control/AcompanhanteController.py
+@@ -0,0 +1,90 @@
++import tkinter as tk
++from collections.abc import Callable
++
++from sqlalchemy.exc import SQLAlchemyError
++
++from src.DAOs.AcompanhanteDAO import AcompanhanteDAO
++from src.control.ViajanteController import ViajanteController
++from src.exception.CampoInvalidoException import CampoInvalidoException
++from src.model.Acompanhante import Acompanhante
++from src.model.Viajante import Viajante
++from src.view.AcompanhanteView import AcompanhanteView
++
++'''
++User Cases implementados neste arquivo
++
++Maria Helena Melo
++UC09: Vincular acompanhante à conta
++'''
++
++
++class AcompanhanteController:
++
++    def __init__(
++            self,
++            root: tk.Tk,
++            viajante_responsavel: Viajante,
++            ao_sair: Callable[[], None],
++        ) -> None:
++        self._root = root
++        self._ao_sair = ao_sair
++        self._viajante_responsavel = viajante_responsavel
++        self._acompanhante_dao = AcompanhanteDAO()
++        self._viajante_controller = ViajanteController()
++        self._tela = AcompanhanteView(
++            root,
++            viajante_responsavel,
++            ao_vincular_acompanhante=self.vincular_acompanhante,
++            ao_sair=self._voltar_inicio)
++        try:
++            self._tela.atualizar_acompanhantes(self.listar_acompanhantes())
++        except (SQLAlchemyError, ValueError) as erro:
++            self._tela.mostrar_erro(
++                f"Não foi possível carregar os acompanhantes: {erro}"
++            )
++
++    def listar_acompanhantes(self) -> list[Acompanhante]:
++        if self._viajante_responsavel.id is None:
++            raise ValueError("O viajante responsável não está cadastrado.")
++
++        acompanhantes = self._acompanhante_dao.listar_por_viajante_id(
++            self._viajante_responsavel.id
++        )
++        self._viajante_responsavel.acompanhantes[:] = acompanhantes
++        return acompanhantes
++
++    def vincular_acompanhante(self, dados: dict[str, str]) -> bool:
++        nome = dados.get("nome", "").strip()
++        try:
++            if not nome or len(nome) > 150:
++                raise CampoInvalidoException(
++                    "Informe um nome com até 150 caracteres."
++                )
++            if not self._viajante_controller.viajante_existe(
++                self._viajante_responsavel
++            ):
++                raise CampoInvalidoException(
++                    "O viajante responsável não está cadastrado."
++                )
++
++            acompanhante = Acompanhante(
++                nome=nome,
++                viajante_vinculado=self._viajante_responsavel,
++            )
++            self._acompanhante_dao.criar(acompanhante)
++            self._viajante_responsavel.acompanhantes.append(acompanhante)
++        except CampoInvalidoException as erro:
++            self._tela.mostrar_erro(str(erro))
++            return False
++        except (SQLAlchemyError, ValueError) as erro:
++            self._tela.mostrar_erro(
++                f"Não foi possível vincular o acompanhante: {erro}"
++            )
++            return False
++
++        self._tela.mostrar_sucesso("Acompanhante vinculado com sucesso.")
++        return True
++
++    def _voltar_inicio(self) -> None:
++        self._tela.destroy()
++        self._ao_sair()
+diff --git a/src/control/CustoController.py b/src/control/CustoController.py
+new file mode 100644
+index 0000000..31f620b
+--- /dev/null
++++ b/src/control/CustoController.py
+@@ -0,0 +1,56 @@
++from src.DAOs.CustoDAO import CustoDAO
++from src.model.Grupo import Grupo
++
++'''
++User Cases implementados neste arquivo
++
++Sarah Meireles
++UC14: Dividir custos de viagem entre membros do grupo
++'''
++
++class CustoController:
++    def __init__(self) -> None:
++        self._custo_dao = CustoDAO()
++
++    def dividir_custos(self, grupo: Grupo, dias: list[dict]) -> dict:
++        organizador = grupo.organizador
++        membros = [organizador] + [
++            i for i in grupo.integrantes if i.id != organizador.id
++        ]
++        ids = {m.id for m in membros}
++        
++        responsaveis = [
++            r for r in self._custo_dao.listar_responsaveis_acompanhantes(grupo.id)
++            if r in ids
++        ]
++        cotas_por_membro = {m.id: 1 + responsaveis.count(m.id) for m in membros}
++        total_cotas = max(1, sum(cotas_por_membro.values()))
++        
++        def dividir(centavos:int) -> dict:
++            por_cota = -(-centavos // total_cotas) # arredonda centavos para cima
++            return {
++                    "total": centavos / 100,
++                    "por_pessoa": por_cota / 100,
++                    "por_viajante": [
++                        {
++                            "nome": m.nome,
++                            "cotas": cotas_por_membro[m.id],
++                            "valor": por_cota * cotas_por_membro[m.id] / 100,
++                        }
++                        for m in membros
++                    ],
++                }
++            
++        dias_calculados = []
++        total_geral = 0
++        for dia in dias:
++            total_dia = 0
++            reservas = []
++            for r in dia.get("reservas", []):
++                centavos = round(r["preco"] * 100)
++                total_dia += centavos
++                reservas.append({"nome": r["nome"], **dividir(centavos)})
++            total_geral += total_dia
++            dias_calculados.append({**dividir(total_dia), "reservas": reservas})
++
++        return {"cotas": total_cotas, **dividir(total_geral), "dias": dias_calculados}
+\ No newline at end of file
+diff --git a/src/control/GrupoController.py b/src/control/GrupoController.py
+index 16270cc..31662f3 100644
+--- a/src/control/GrupoController.py
++++ b/src/control/GrupoController.py
+@@ -1,9 +1,35 @@
++from collections.abc import Callable
++from __future__ import annotations
++from typing import TYPE_CHECKING
++
+ from src.exception.CampoInvalidoException import CampoInvalidoException
+ from src.DAOs.GrupoDAO import GrupoDAO
++from src.model.Acompanhante import Acompanhante
+ from src.model.Grupo import Grupo
+ from src.model.Viajante import Viajante
+ from src.view.GrupoView import GrupoView
+ from email_validator import validate_email, EmailNotValidError
++from src.util.email import enviar_email
++
++'''
++User Cases implementados neste arquivo
++
++Gustavo de Pinho
++UC04: Editar e remover grupos de viagem
++UC06: Convidar, visualizar e excluir viajantes
++UC10: Adicionar acompanhante ao grupo de viagem
++
++
++Maria Helena Machado Melo
++UC03: Criar grupo de viagem
++UC05: Entrar ou sair de um grupo de viagem
++
++Sarah Meireles
++UC07: Visualizar grupos de viagem
++'''
++
++if TYPE_CHECKING:
++    from src.persistence.models import GrupoRecord, ViajanteRecord
+ 
+ class GrupoController:
+ 
+@@ -15,14 +41,35 @@ class GrupoController:
+         self._grupo_dao = GrupoDAO()
+         self._tela = GrupoView()
+ 
++    def _validar_nome(self, nome: str) -> None:
++        if not 1 <= len(nome) <= 20:
++            raise CampoInvalidoException("Nome de grupo inválido")
++
+     # UC03: Criar grupo de viagem (Implementado por Maria Helena Melo)
+     
+-    def criar_grupo(self) -> None:
+-        dados = self._tela.cria_grupo()
++    def criar_grupo(
++        self,
++        dados: dict | None = None,
++        *,
++        mostrar_erro: Callable[[str], None] | None = None,
++        mostrar_sucesso: Callable[[str], None] | None = None,
++    ) -> bool:
++        if dados is None:
++            dados = self._tela.cria_grupo()
++
++        ao_mostrar_erro = (
++            self._tela.mostra_mensagem
++            if mostrar_erro is None
++            else mostrar_erro
++        )
++        ao_mostrar_sucesso = (
++            self._tela.mostra_mensagem
++            if mostrar_sucesso is None
++            else mostrar_sucesso
++        )
+ 
+         try:
+-            if len(dados["nome"]) == 0 or len(dados["nome"]) > 20:
+-                raise CampoInvalidoException("Nome de grupo inválido")
++            self._validar_nome(dados["nome"])
+ 
+             if len(dados["participantes"]) == 0:
+                 raise CampoInvalidoException("Deve conter no mínimo um e-mail válido")
+@@ -37,29 +84,31 @@ class GrupoController:
+             self._organizador.grupos_organizador.append(grupo)
+ 
+         except EmailNotValidError:
+-            self._tela.mostra_mensagem("Deve conter no mínimo um e-mail válido")
+-            return
++            ao_mostrar_erro("Deve conter no mínimo um e-mail válido")
++            return False
+ 
+         except ValueError as e:
+-            self._tela.mostra_mensagem(str(e))
+-            return
++            ao_mostrar_erro(str(e))
++            return False
+ 
+         except CampoInvalidoException as e:
+-            self._tela.mostra_mensagem(str(e))
++            ao_mostrar_erro(str(e))
++            return False
+ 
+         else:
+             nao_adicionados = self._adicionar_participantes_iniciais(
+                 grupo, dados["participantes"]
+             )
+-            self._tela.mostra_mensagem("Grupo criado com sucesso.")
++            ao_mostrar_sucesso("Grupo criado com sucesso.")
+             if nao_adicionados:
+-                self._tela.mostra_mensagem(
++                ao_mostrar_erro(
+                     "Não foi possível adicionar: " + "; ".join(nao_adicionados)
+                 )
++            return True
+ 
+     # UC06: Convidar, visualizar e excluir viajantes (Implementado por Gustavo de Pinho)
+ 
+-    def _para_viajante(self, registro) -> Viajante:
++    def _para_viajante(self, registro: ViajanteRecord) -> Viajante:
+         return Viajante(
+             id=registro.id,
+             nome=registro.nome,
+@@ -71,20 +120,31 @@ class GrupoController:
+     def _adicionar_participantes_iniciais(
+         self, grupo: Grupo, emails: list[str]
+     ) -> list[str]:
+-        """Adiciona cada e-mail ao grupo recém-criado e devolve os que falharam (com o motivo)."""
++        """Convida cada e-mail para o grupo recém-criado e devolve os que falharam."""
+         nao_adicionados = []
+ 
+         for email in emails:
+             try:
+-                registro = self._grupo_dao.adicionar_integrante(grupo.id, email)
++                self._enviar_convite(grupo, email)
+             except ValueError as e:
+                 nao_adicionados.append(f"{email} ({e})")
+                 continue
+ 
+-            grupo.integrantes.append(self._para_viajante(registro))
+-
+         return nao_adicionados
+ 
++    def _enviar_convite(self, grupo: Grupo, email: str) -> None:
++        self._grupo_dao.criar_convite(grupo.id, email, self._organizador.id)
++        enviar_email(self._organizador.nome, grupo.nome, email)
++
++    def convidar_integrante(self, grupo: Grupo, email: str) -> None:
++        email = email.strip().lower()
++        try:
++            validate_email(email, check_deliverability=False)
++        except EmailNotValidError as erro:
++            raise CampoInvalidoException("Informe um e-mail válido.") from erro
++
++        self._enviar_convite(grupo, email)
++
+     def _eh_organizador(self, grupo: Grupo) -> bool:
+         return (
+             grupo.organizador is not None
+@@ -104,7 +164,8 @@ class GrupoController:
+                 {"id": r.id, "nome": r.nome, "email": r.email} for r in registros
+             ]
+             opcao = self._tela.exibe_grupo(
+-                grupo.nome, grupo.organizador.nome, integrantes
++                grupo.nome, grupo.organizador.nome, integrantes,
++                eh_organizador=self._eh_organizador(grupo),
+             )
+ 
+             if opcao == "0":  # Voltar tela anterior
+@@ -120,33 +181,57 @@ class GrupoController:
+                 self._tela.mostra_mensagem("Opção inválida.")
+ 
+     def adicionar_integrante(self, grupo: Grupo) -> bool:
+-        """Retorna True se o viajante foi adicionado; False se o fluxo voltou para a tela do grupo."""
++        """Cria um convite pendente; o viajante só entra no grupo após aceitar."""
+         if not self._eh_organizador(grupo):
+             self._tela.mostra_mensagem(
+                 "Apenas o organizador do grupo pode adicionar viajantes."
+             )
+             return False
+ 
+-        email = self._tela.solicita_email()
++        try:
++            self.convidar_integrante(grupo, self._tela.solicita_email())
++        except (CampoInvalidoException, ValueError) as e:
++            self._tela.mostra_mensagem(str(e))
++            return False
++
++        self._tela.mostra_mensagem("Convite enviado com sucesso")
++        return True
+ 
++    def aceitar_convite(self, convite_id: int) -> bool:
++        """Aceita um convite como o viajante atualmente logado."""
+         try:
+-            validate_email(email)
+-        except EmailNotValidError:
+-            self._tela.mostra_mensagem(
+-                "e-mail inserido é inválido - Por favor insira um endereço válido."
+-            )
++            self._grupo_dao.aceitar_convite(convite_id, self._organizador.id)
++        except ValueError as e:
++            self._tela.mostra_mensagem(str(e))
+             return False
+ 
++        self._tela.mostra_mensagem("Convite aceito com sucesso.")
++        return True
++
++    def rejeitar_convite(self, convite_id: int) -> bool:
++        """Rejeita um convite como o viajante atualmente logado."""
+         try:
+-            registro = self._grupo_dao.adicionar_integrante(grupo.id, email)
++            self._grupo_dao.rejeitar_convite(convite_id, self._organizador.id)
+         except ValueError as e:
+             self._tela.mostra_mensagem(str(e))
+             return False
+ 
+-        grupo.integrantes.append(self._para_viajante(registro))
+-        self._tela.mostra_mensagem("Convite enviado com sucesso")
++        self._tela.mostra_mensagem("Convite rejeitado.")
+         return True
+ 
++    def listar_convites_pendentes(self) -> list[dict]:
++        """Lista os convites pendentes do viajante logado com o nome do grupo."""
++        registros = self._grupo_dao.listar_convites_pendentes(
++            self._organizador.id
++        )
++        return [
++            {
++                "id": convite.id,
++                "nome_grupo": convite.grupo.nome,
++            }
++            for convite in registros
++        ]
++
+     def excluir_integrante(self, grupo: Grupo, integrantes: list[dict]) -> bool:
+         """Retorna True se o viajante foi excluído; False se a operação foi cancelada."""
+         if not self._eh_organizador(grupo):
+@@ -171,37 +256,135 @@ class GrupoController:
+             return False
+ 
+         try:
+-            self._grupo_dao.remover_integrante(grupo.id, escolhido["id"])
++            self.remover_integrante(grupo, escolhido["id"])
+         except ValueError as e:
+             self._tela.mostra_mensagem(str(e))
+             return False
+ 
+-        grupo.integrantes[:] = [i for i in grupo.integrantes if i.id != escolhido["id"]]
+         self._tela.mostra_mensagem("Usuário excluído do grupo.")
+         return True
+ 
++    def remover_integrante(self, grupo: Grupo, viajante_id: int) -> None:
++        acompanhantes_removidos = self._grupo_dao.remover_integrante(
++            grupo.id, viajante_id, self._organizador.id
++        )
++        grupo.integrantes[:] = [i for i in grupo.integrantes if i.id != viajante_id]
++        grupo.acompanhantes[:] = [
++            a for a in grupo.acompanhantes if a.id not in acompanhantes_removidos
++        ]
++
++    def sair_do_grupo(self, grupo: Grupo) -> None:
++        if grupo.id is None:
++            raise ValueError("Grupo não encontrado.")
++        acompanhantes_removidos = self._grupo_dao.sair_do_grupo(
++            grupo.id, self._organizador.id
++        )
++        viajante_id = self._organizador.id
++        grupo.integrantes[:] = [
++            integrante
++            for integrante in grupo.integrantes
++            if integrante.id != viajante_id
++        ]
++        grupo.acompanhantes[:] = [
++            acompanhante
++            for acompanhante in grupo.acompanhantes
++            if acompanhante.id not in acompanhantes_removidos
++        ]
++
++    def remover_acompanhante(self, grupo: Grupo, acompanhante_id: int) -> None:
++        self._grupo_dao.remover_acompanhante(
++            grupo.id, acompanhante_id, self._organizador.id
++        )
++        grupo.acompanhantes[:] = [
++            a for a in grupo.acompanhantes if a.id != acompanhante_id
++        ]
++
+     # ---------- GRUPOS DO ORGANIZADOR ----------
+ 
+-    def _buscar_grupos(self) -> list[Grupo]:
++    def listar_grupos_organizados(self) -> list[Grupo]:
+         registros = self._grupo_dao.listar_por_organizador(self._organizador.id)
+-        return [
+-            Grupo(
+-                id=r.id,
+-                nome=r.nome,
+-                organizador=self._organizador,
+-                sugestoes=r.sugestoes,
+-            )
+-            for r in registros
+-        ]
++        return [self._para_grupo(r) for r in registros]
+ 
+-    def selecionar_grupo_para_gerenciar(self) -> None:
+-        grupos = self._buscar_grupos()
++    def _selecionar_grupo(self) -> Grupo | None:
++        grupos = self.listar_grupos_organizados()
+         if not grupos:
+             self._tela.mostra_mensagem("Você ainda não organiza nenhum grupo.")
+-            return
++            return None
+ 
+         indice = self._tela.seleciona_grupo([g.nome for g in grupos])
+-        if indice is None:
+-            return
++        return grupos[indice] if indice is not None else None
+ 
+-        self.gerenciar_grupo(grupos[indice])
+\ No newline at end of file
++    def selecionar_grupo_para_gerenciar(self) -> None:
++        grupo = self._selecionar_grupo()
++        if grupo is not None:
++            self.gerenciar_grupo(grupo)
++
++    def editar_grupo(self, grupo_id: int, nome: str) -> None:
++        self._validar_nome(nome)
++        self._grupo_dao.atualizar_nome(grupo_id, self._organizador.id, nome)
++
++        for grupo_organizado in self._organizador.grupos_organizador:
++            if grupo_organizado.id == grupo_id:
++                grupo_organizado.nome = nome
++
++    def remover_grupo(self, grupo_id: int) -> None:
++        self._grupo_dao.remover(grupo_id, self._organizador.id)
++        self._organizador.grupos_organizador[:] = [
++            g for g in self._organizador.grupos_organizador if g.id != grupo_id
++        ]
++
++    def listar_acompanhantes(self, grupo_id: int) -> list[Acompanhante]:
++        return [
++            Acompanhante(id=registro.id, nome=registro.nome)
++            for registro in self._grupo_dao.listar_acompanhantes(
++                grupo_id, self._organizador.id
++            )
++        ]
++
++    def listar_acompanhantes_disponiveis(self, grupo_id: int) -> list[Acompanhante]:
++        registros = self._grupo_dao.listar_acompanhantes_disponiveis(
++            grupo_id, self._organizador.id
++        )
++        return [
++            Acompanhante(
++                id=registro.id,
++                nome=registro.nome,
++                viajante_vinculado=Viajante(
++                    id=registro.viajante_id, nome=registro.viajante_vinculado.nome
++                ),
++            )
++            for registro in registros
++        ]
++
++    def adicionar_acompanhantes(self, grupo_id: int, acompanhante_ids: list[int]) -> None:
++        self._grupo_dao.adicionar_acompanhantes(
++            grupo_id, self._organizador.id, acompanhante_ids
++        )
++        
++    # UC07: Visualizar grupos de viagem (Implementado por Sarah Meireles)
++    
++    def _para_grupo(self, registro: GrupoRecord) -> Grupo:
++        eh_organizador = registro.organizador_id == self._organizador.id
++        if eh_organizador:
++            organizador = self._organizador
++        elif registro.organizador is not None:
++            organizador = self._para_viajante(registro.organizador)
++        else:
++            organizador = None
++            
++        return Grupo(
++            id=registro.id,
++            nome=registro.nome,
++            organizador=organizador,
++            integrantes=[self._para_viajante(i) for i in registro.integrantes],
++            sugestoes=(registro.sugestoes or {}) if eh_organizador else {},
++        )
++        
++    def listar_meus_grupos(self) -> dict[str, list[Grupo]]:
++        organizados = self._grupo_dao.listar_por_organizador(self._organizador.id)
++        participando = self._grupo_dao.listar_por_participante(self._organizador.id)
++        
++        return {
++            "organizados": [self._para_grupo(r) for r in organizados],
++            "participando": [self._para_grupo(r) for r in participando],
++        }
+diff --git a/src/control/InicioController.py b/src/control/InicioController.py
+index bb630f8..f22d773 100644
+--- a/src/control/InicioController.py
++++ b/src/control/InicioController.py
+@@ -1,46 +1,62 @@
+-# Entrega 3: Implementado por Sarah Meireles
+-
++import tkinter as tk
++from typing import Optional
+ from src.control.MenuController import MenuController
+ from src.control.ViajanteController import ViajanteController
+-from src.view.InicioView import InicioView
+-from src.DAOs.ViajanteDAO import ViajanteDAO
+ from src.model.Viajante import Viajante
++from src.view.InicioView import InicioView
+ 
++'''
++User Cases implementados neste arquivo
+ 
+-class InicioController:
++Maria Helena Melo
++UC02: Efetuar login
++'''
+ 
+-    def __init__(self) -> None:
+-        self._viajante_dao = ViajanteDAO()
++class InicioController:
++    def __init__(self, root: tk.Tk) -> None:
++        self._root = root
+         self._viajante_controller = ViajanteController()
+-        self._tela = InicioView()
+-
+-    def iniciar(self) -> None:
+-        while True:
+-            opcao = self._tela.exibe_menu_inicial()
+-
+-            if opcao == "1":
+-                self._viajante_controller.cadastrar_viajante()
+-            elif opcao == "2":
+-                self._entrar()
+-            elif opcao == "0":
+-                return
+-            else:
+-                self._tela.mostra_mensagem("Opção inválida.")
+-    
+-    def _entrar(self) -> None:
+-        # login provisório, caso de uso ainda não implementado, está apenas para testar o fluxo do sistema
+-        email = self._tela.solicita_email_login()
+-        registro = self._viajante_dao.buscar_por_email(email)
+-
+-        if registro is None:
+-            self._tela.mostra_mensagem("Nenhum viajante cadastrado com esse e-mail.")
++        self._viajante_logado: Optional[Viajante] = None
++        self._menu_controller: Optional[MenuController] = None
++        self._tela = InicioView(
++            root,
++            ao_entrar=self._entrar,
++            ao_cadastrar=self._cadastrar,
++            ao_abrir_menu=self._abrir_menu,
++            ao_sair=root.destroy,
++        )
++
++    def _entrar(self, credenciais: dict[str, str]) -> None:
++        viajante = self._viajante_controller.validar_credenciais(credenciais)
++
++        if viajante is None:
++            self._tela.mostrar_erro("Credenciais inválidas.")
+             return
+ 
+-        viajante = Viajante(
+-            id=registro.id,
+-            nome=registro.nome,
+-            data_nascimento=registro.data_nascimento,
+-            email=registro.email,
+-            senha=registro.senha,
++        self._viajante_logado = viajante
++        self._abrir_menu()
++
++    def _abrir_menu(self) -> None:
++        viajante = self._viajante_logado
++        if viajante is None:
++            self._tela.mostrar_erro("Faça login antes de abrir o menu.")
++            return
++
++        self._menu_controller = MenuController(
++            self._root, viajante, ao_sair=self._voltar_inicio
+         )
+-        MenuController(viajante).iniciar()
+\ No newline at end of file
++        self._tela.pack_forget()
++
++    def _voltar_inicio(self) -> None:
++        self._menu_controller = None
++        self._tela.pack(fill=tk.BOTH, expand=True)
++        self._tela.mostrar_inicio()
++
++    def _cadastrar(self, dados: dict[str, str]) -> None:
++        erro = self._viajante_controller.cadastrar_viajante(dados)
++        if erro is not None:
++            self._tela.mostrar_erro(erro)
++            return
++
++        self._tela.mostrar_sucesso("Cadastro realizado com sucesso.")
++        self._tela.mostrar_login()
+\ No newline at end of file
+diff --git a/src/control/ItinerarioController.py b/src/control/ItinerarioController.py
+new file mode 100644
+index 0000000..c6d8b33
+--- /dev/null
++++ b/src/control/ItinerarioController.py
+@@ -0,0 +1,173 @@
++from datetime import date
++
++from src.DAOs.ItinerarioDAO import ItinerarioDAO
++
++'''
++User Cases implementados neste arquivo
++
++Gustavo de Pinho
++UC12: Sugerir mudanças no itinerário
++UC13: Aprovar sugestão de alteração
++
++Maria Helena Melo
++UC11: Criar e alterar itinerário de viagem
++'''
++
++class ItinerarioController:
++    def __init__(self) -> None:
++        self._itinerario_dao = ItinerarioDAO()
++
++    def listar_dias(self, grupo_id: int) -> list[dict[str, str]]:
++        programacao = self._itinerario_dao.listar_programacao(grupo_id)
++        reservas_por_dia = self._itinerario_dao.listar_reservas_por_dia(grupo_id)
++        if not isinstance(programacao, dict) or any(
++            not isinstance(data, str) for data in programacao
++        ):
++            raise ValueError("A programação do itinerário está inválida.")
++
++        dias = []
++        for data in sorted(programacao):
++            detalhes = programacao[data]
++            if not isinstance(detalhes, dict):
++                raise ValueError("A programação do itinerário está inválida.")
++
++            try:
++                data_formatada = date.fromisoformat(data).strftime("%d/%m/%Y")
++            except ValueError as erro:
++                raise ValueError(
++                    f"A data {data!r} no itinerário está inválida."
++                ) from erro
++
++            passeio = detalhes.get("passeio")
++            cidade = detalhes.get("cidade")
++            if not isinstance(passeio, str) or not isinstance(cidade, str):
++                raise ValueError(
++                    f"O passeio e a cidade de {data_formatada} são obrigatórios."
++                )
++
++            dias.append(
++                {
++                    "data": data_formatada,
++                    "passeio": passeio,
++                    "cidade": cidade,
++                    "reservas": reservas_por_dia.get(data, []),
++                }
++            )
++
++        return dias
++
++    def adicionar_dia(
++        self, grupo_id: int, viajante_id: int, dados: dict
++    ) -> None:
++        data, cidade, passeio, reservas = self._normalizar_dia(dados)
++        self._itinerario_dao.adicionar_dia(
++            grupo_id, viajante_id, data, cidade, passeio, reservas
++        )
++
++    def sugerir_dia(self, grupo_id: int, viajante_id: int, dados: dict) -> None:
++        data, cidade, passeio, reservas = self._normalizar_dia(dados)
++        self._itinerario_dao.sugerir_dia(
++            grupo_id, viajante_id, data, cidade, passeio, reservas
++        )
++
++    def listar_sugestoes(self, grupo_id: int, viajante_id: int) -> list[dict]:
++        sugestoes = self._itinerario_dao.listar_sugestoes(grupo_id, viajante_id)
++        try:
++            return [
++                {
++                    **sugestao,
++                    "data": date.fromisoformat(sugestao["data"]).strftime("%d/%m/%Y"),
++                }
++                for sugestao in sugestoes
++            ]
++        except (KeyError, TypeError, ValueError) as erro:
++            raise ValueError("Há uma sugestão de itinerário com data inválida.") from erro
++
++    def editar_dia(
++        self, grupo_id: int, viajante_id: int, data_original: str, dados: dict
++    ) -> None:
++        try:
++            data_anterior = date.fromisoformat(data_original)
++        except ValueError as erro:
++            raise ValueError("A data do dia selecionado está inválida.") from erro
++
++        data, cidade, passeio, reservas = self._normalizar_dia(dados)
++        self._itinerario_dao.editar_dia(
++            grupo_id,
++            viajante_id,
++            data_anterior,
++            data,
++            cidade,
++            passeio,
++            reservas,
++        )
++
++    def remover_dias(self, grupo_id: int, viajante_id: int, datas: list[str]) -> None:
++        if not datas:
++            raise ValueError("Selecione pelo menos um dia para remover.")
++        try:
++            dias = {date.fromisoformat(data) for data in datas}
++        except ValueError as erro:
++            raise ValueError("Uma das datas selecionadas está inválida.") from erro
++        self._itinerario_dao.remover_dias(grupo_id, viajante_id, dias)
++
++    @staticmethod
++    def _normalizar_dia(
++        dados: dict,
++    ) -> tuple[date, str, str, list[tuple[str, float, int]]]:
++        data = dados.get("data")
++        cidade = dados.get("cidade")
++        passeio = dados.get("passeio")
++        reservas = dados.get("reservas")
++
++        if not isinstance(data, str):
++            raise ValueError("Informe uma data válida para o itinerário.")
++        try:
++            data_viagem = date.fromisoformat(data)
++        except ValueError as erro:
++            raise ValueError("Informe uma data válida para o itinerário.") from erro
++
++        if not isinstance(cidade, str) or not cidade.strip():
++            raise ValueError("Informe a cidade.")
++        if not isinstance(passeio, str) or not passeio.strip():
++            raise ValueError("Informe o passeio turístico.")
++        if not isinstance(reservas, list):
++            raise ValueError("Os dados das reservas estão inválidos.")
++
++        reservas_validadas = []
++        for reserva in reservas:
++            if not isinstance(reserva, dict):
++                raise ValueError("Os dados da reserva estão inválidos.")
++
++            nome = reserva.get("nome")
++            preco = reserva.get("preco")
++            nome_vazio = nome is None or (
++                isinstance(nome, str) and not nome.strip()
++            )
++            preco_vazio = preco is None or (
++                isinstance(preco, str) and not preco.strip()
++            )
++            if nome_vazio and preco_vazio:
++                continue
++
++            titular_id = reserva.get("titular_id")
++            if (
++                not isinstance(nome, str)
++                or not nome.strip()
++                or not isinstance(preco, (int, float))
++                or isinstance(preco, bool)
++                or not isinstance(titular_id, int)
++                or isinstance(titular_id, bool)
++            ):
++                raise ValueError("Os dados da reserva estão inválidos.")
++            reservas_validadas.append((nome.strip(), float(preco), titular_id))
++
++        if data_viagem < date.today():
++            raise ValueError("A data escolhida não pode ser anterior à data de hoje!")
++
++        return (
++            data_viagem,
++            cidade.strip(),
++            passeio.strip(),
++            reservas_validadas,
++        )
+diff --git a/src/control/MenuController.py b/src/control/MenuController.py
+index 7db9aec..64b20ec 100644
+--- a/src/control/MenuController.py
++++ b/src/control/MenuController.py
+@@ -1,23 +1,450 @@
+-from src.control.GrupoController import GrupoController
++import tkinter as tk
++from typing import Optional
++from collections.abc import Callable
++
++from sqlalchemy.exc import SQLAlchemyError
++
++from src.model.Acompanhante import Acompanhante
+ from src.model.Viajante import Viajante
++from src.model.Grupo import Grupo
+ from src.view.MenuView import MenuView
++from src.view.GrupoDetalheView import GrupoDetalheView, ParticipanteGrupo
++from src.control.AcompanhanteController import AcompanhanteController
++from src.control.GrupoController import GrupoController
++from src.control.ItinerarioController import ItinerarioController
++from src.exception.CampoInvalidoException import CampoInvalidoException
++from src.view.ItinerarioView import ItinerarioView
++from src.view.SugestoesItinerarioView import SugestoesItinerarioView
++from src.control.RelatorioController import RelatorioController
++from src.view.RelatorioView import RelatorioView
+ 
+ 
+ class MenuController:
+ 
+-    def __init__(self, viajante: Viajante) -> None:
++    def __init__(
++        self,
++        root: tk.Tk,
++        viajante: Viajante,
++        ao_sair: Callable[[], None],
++    ) -> None:
++        self._root = root
++        self._viajante_logado: Viajante = viajante
++        self._acompanhante_controller: Optional[AcompanhanteController]= None
+         self._grupo_controller = GrupoController(viajante)
+-        self._tela = MenuView()
++        self._itinerario_controller = ItinerarioController()
++        self._ao_sair = ao_sair
++        self._grupos_por_id: dict[int, Grupo] = {}
++        self._tela_grupo: Optional[GrupoDetalheView] = None
++        self._tela_itinerario: Optional[ItinerarioView] = None
++        self._tela_sugestoes_itinerario: Optional[SugestoesItinerarioView] = None
++        self._relatorio_controller = RelatorioController()
++        self._tela_relatorio: Optional[RelatorioView] = None
++        self._tela = MenuView(
++            root,
++            nome_viajante=viajante.nome,
++            ao_criar_grupo=self._criar_grupo,
++            ao_listar_grupos=self._listar_grupos,
++            ao_abrir_acompanhante=self._abrir_acompanhante,
++            ao_listar_convites=self._listar_convites,
++            ao_aceitar_convite=self._aceitar_convite,
++            ao_rejeitar_convite=self._rejeitar_convite,
++            ao_sair=self._sair_do_menu,
++            ao_abrir_grupo=self._abrir_grupo,
++        )
+ 
+-    def iniciar(self) -> None:
+-        while True:
+-            opcao = self._tela.exibe_menu_principal()
++    def _abrir_acompanhante(self) -> None:
++        viajante = self._viajante_logado
++        if viajante is None:
++            self._tela.mostrar_erro("Faça login antes de abrir a tela de acompanhantes.")
++            return
+ 
+-            if opcao == "1":
+-                self._grupo_controller.criar_grupo()
+-            elif opcao == "2":
+-                self._grupo_controller.selecionar_grupo_para_gerenciar()
+-            elif opcao == "0":
+-                return
++        self._acompanhante_controller = AcompanhanteController(
++            self._root, viajante, ao_sair=self._voltar_ao_menu
++        )
++        self._tela.pack_forget()
++
++    def _voltar_ao_menu(self) -> None:
++        self._acompanhante_controller = None
++        self._tela.pack(fill=tk.BOTH, expand=True)
++        self._tela.mostrar_inicio()
++
++    def _sair_do_menu(self) -> None:
++        self._tela.destroy()
++        self._ao_sair()
++
++    def _criar_grupo(self, nome: str, participantes: list[str]) -> bool:
++        return self._grupo_controller.criar_grupo(
++            {"nome": nome, "participantes": participantes},
++            mostrar_erro=self._tela.mostrar_erro,
++            mostrar_sucesso=self._tela.mostrar_sucesso,
++        )
++    
++    def _abrir_grupo(self, grupo_id: int) -> None:
++        grupo = self._grupos_por_id.get(grupo_id)
++        if grupo is None:
++            self._tela.mostrar_erro("Grupo não encontrado.")
++            return
++
++        try:
++            grupo.acompanhantes[:] = self._grupo_controller.listar_acompanhantes(grupo_id)
++        except ValueError as erro:
++            self._tela.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            self._tela.mostrar_erro("Não foi possível carregar os acompanhantes do grupo.")
++            return
++
++        organizador = grupo.organizador
++        eh_organizador = (
++            organizador is not None and organizador.id == self._viajante_logado.id
++        )
++        self._tela.pack_forget()
++        self._tela_grupo = GrupoDetalheView(
++            self._root,
++            nome_grupo=grupo.nome,
++            participantes=self._participantes_do_grupo(grupo),
++            eh_organizador=eh_organizador,
++            ao_voltar=self._voltar_do_grupo,
++            ao_renomear=lambda nome: self._editar_grupo(grupo.id, nome),
++            ao_remover=lambda: self._remover_e_voltar(grupo.id),
++            ao_convidar_integrante=lambda email: self._convidar_integrante(grupo, email),
++            ao_remover_participante=lambda item: self._remover_participante(grupo, item),
++            ao_adicionar_acompanhante=lambda: self._adicionar_acompanhantes(grupo),
++            ao_abrir_itinerario=lambda: self._abrir_itinerario(grupo),
++            ao_abrir_relatorio=lambda: self._abrir_relatorio(grupo),
++            ao_sair_do_grupo=lambda: self._sair_do_grupo(grupo),
++        )
++
++    def _abrir_itinerario(self, grupo: Grupo) -> None:
++        tela_grupo = self._tela_grupo
++        if tela_grupo is None:
++            return
++        if grupo.id is None:
++            tela_grupo.mostrar_erro("Grupo não encontrado.")
++            return
++        grupo_id = grupo.id
++
++        try:
++            dias = self._itinerario_controller.listar_dias(grupo_id)
++        except ValueError as erro:
++            tela_grupo.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela_grupo.mostrar_erro("Não foi possível carregar o itinerário do grupo.")
++            return
++
++        eh_organizador = (
++            grupo.organizador is not None
++            and grupo.organizador.id == self._viajante_logado.id
++        )
++        tela_grupo.pack_forget()
++        self._tela_itinerario = ItinerarioView(
++            self._root,
++            nome_grupo=grupo.nome,
++            dias=dias,
++            ao_voltar=self._voltar_do_itinerario,
++            participantes=self._participantes_reserva(grupo),
++            pode_adicionar=eh_organizador,
++            ao_adicionar=lambda dados: self._salvar_dia_itinerario(
++                grupo_id, dados, como_sugestao=not eh_organizador
++            ),
++            ao_editar=lambda data_original, dados: self._editar_dia_itinerario(
++                grupo_id, data_original, dados
++            ),
++            ao_remover=lambda datas: self._remover_dias_itinerario(
++                grupo_id, datas
++            ),
++            ao_abrir_sugestoes=lambda: self._abrir_sugestoes_itinerario(grupo_id),
++        )
++
++    @staticmethod
++    def _participantes_reserva(grupo: Grupo) -> list[tuple[int, str]]:
++        viajantes = ([grupo.organizador] if grupo.organizador is not None else [])
++        viajantes.extend(grupo.integrantes)
++        participantes: list[tuple[int, str]] = []
++        ids_adicionados: set[int] = set()
++        for viajante in viajantes:
++            if viajante.id is not None and viajante.id not in ids_adicionados:
++                participantes.append((viajante.id, viajante.nome))
++                ids_adicionados.add(viajante.id)
++        return participantes
++
++    def _salvar_dia_itinerario(
++        self, grupo_id: int, dados: dict, *, como_sugestao: bool
++    ) -> bool:
++        tela = self._tela_itinerario
++        if tela is None:
++            return False
++        viajante_id = self._viajante_logado.id
++        if viajante_id is None:
++            tela.mostrar_erro("Faça login antes de enviar o dia de viagem.")
++            return False
++        salvar = (
++            self._itinerario_controller.sugerir_dia
++            if como_sugestao
++            else self._itinerario_controller.adicionar_dia
++        )
++        try:
++            salvar(grupo_id, viajante_id, dados)
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return False
++        except SQLAlchemyError:
++            tela.mostrar_erro(
++                "Não foi possível enviar a sugestão."
++                if como_sugestao
++                else "Não foi possível adicionar o dia ao itinerário."
++            )
++            return False
++        if como_sugestao:
++            tela.mostrar_sucesso("Sugestão enviada ao organizador.")
++        return True
++
++    def _editar_dia_itinerario(
++        self, grupo_id: int, data_original: str, dados: dict
++    ) -> bool:
++        tela = self._tela_itinerario
++        viajante_id = self._viajante_logado.id
++        if tela is None or viajante_id is None:
++            return False
++        try:
++            self._itinerario_controller.editar_dia(
++                grupo_id, viajante_id, data_original, dados
++            )
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return False
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível editar o dia do itinerário.")
++            return False
++        return True
++
++    def _remover_dias_itinerario(
++        self, grupo_id: int, datas: list[str]
++    ) -> bool:
++        tela = self._tela_itinerario
++        viajante_id = self._viajante_logado.id
++        if tela is None or viajante_id is None:
++            return False
++        try:
++            self._itinerario_controller.remover_dias(grupo_id, viajante_id, datas)
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return False
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível remover os dias do itinerário.")
++            return False
++        return True
++
++    def _abrir_sugestoes_itinerario(self, grupo_id: int) -> None:
++        tela = self._tela_itinerario
++        viajante_id = self._viajante_logado.id
++        if tela is None or viajante_id is None:
++            return
++
++        try:
++            sugestoes = self._itinerario_controller.listar_sugestoes(
++                grupo_id, viajante_id
++            )
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível carregar as sugestões de itinerário.")
++            return
++
++        tela.pack_forget()
++        self._tela_sugestoes_itinerario = SugestoesItinerarioView(
++            self._root, sugestoes, ao_voltar=self._voltar_das_sugestoes_itinerario
++        )
++
++    def _voltar_das_sugestoes_itinerario(self) -> None:
++        if self._tela_sugestoes_itinerario is not None:
++            self._tela_sugestoes_itinerario.destroy()
++            self._tela_sugestoes_itinerario = None
++        if self._tela_itinerario is not None:
++            self._tela_itinerario.pack(fill=tk.BOTH, expand=True)
++
++    def _voltar_do_itinerario(self) -> None:
++        if self._tela_itinerario is not None:
++            self._tela_itinerario.destroy()
++            self._tela_itinerario = None
++        if self._tela_grupo is not None:
++            self._tela_grupo.pack(fill=tk.BOTH, expand=True)
++
++    @staticmethod
++    def _itens_acompanhantes(acompanhantes: list[Acompanhante]) -> list[ParticipanteGrupo]:
++        return [ParticipanteGrupo(a.id, a.nome, "acompanhante") for a in acompanhantes]
++
++    def _participantes_do_grupo(self, grupo: Grupo) -> list[ParticipanteGrupo]:
++        organizador = grupo.organizador
++        participantes = [
++            ParticipanteGrupo(integrante.id, integrante.nome, "participante")
++            for integrante in grupo.integrantes
++            if organizador is None or integrante.id != organizador.id
++        ]
++        if organizador is not None:
++            participantes.insert(
++                0, ParticipanteGrupo(organizador.id, organizador.nome, "organizador")
++            )
++        return participantes + self._itens_acompanhantes(grupo.acompanhantes)
++
++    def _convidar_integrante(self, grupo: Grupo, email: str) -> None:
++        tela = self._tela_grupo
++        if tela is None:
++            return
++
++        try:
++            self._grupo_controller.convidar_integrante(grupo, email)
++        except (CampoInvalidoException, ValueError) as erro:
++            tela.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível enviar o convite.")
++            return
++
++        tela.mostrar_sucesso("Convite criado. O participante entrará no grupo após aceitar.")
++
++    def _remover_participante(self, grupo: Grupo, item: ParticipanteGrupo) -> None:
++        tela = self._tela_grupo
++        if tela is None or item.id is None or item.tipo == "organizador":
++            return
++
++        try:
++            if item.tipo == "acompanhante":
++                self._grupo_controller.remover_acompanhante(grupo, item.id)
+             else:
+-                self._tela.mostra_mensagem("Opção inválida.")
+\ No newline at end of file
++                self._grupo_controller.remover_integrante(grupo, item.id)
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível remover do grupo.")
++            return
++
++        tela.atualizar_participantes(self._participantes_do_grupo(grupo))
++
++    def _sair_do_grupo(self, grupo: Grupo) -> None:
++        tela = self._tela_grupo
++        if tela is None:
++            return
++        try:
++            self._grupo_controller.sair_do_grupo(grupo)
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível sair do grupo.")
++            return
++
++        tela.mostrar_sucesso("Você saiu do grupo.")
++        self._voltar_do_grupo()
++
++    def _adicionar_acompanhantes(self, grupo: Grupo) -> None:
++        tela = self._tela_grupo
++        if tela is None or grupo.id is None:
++            return
++
++        try:
++            disponiveis = self._grupo_controller.listar_acompanhantes_disponiveis(grupo.id)
++            ids = tela.selecionar_acompanhantes(disponiveis)
++            if not ids:
++                return
++            self._grupo_controller.adicionar_acompanhantes(grupo.id, ids)
++        except ValueError as erro:
++            tela.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela.mostrar_erro("Não foi possível adicionar os acompanhantes ao grupo.")
++            return
++
++        selecionados = set(ids)
++        adicionados = [
++            acompanhante for acompanhante in disponiveis
++            if acompanhante.id in selecionados
++        ]
++        grupo.acompanhantes.extend(adicionados)
++        tela.adicionar_participantes(self._itens_acompanhantes(adicionados))
++        
++    def _voltar_do_grupo(self) -> None:
++        if self._tela_grupo is not None:
++            self._tela_grupo.destroy()
++            self._tela_grupo = None
++        self._tela.pack(fill=tk.BOTH, expand=True)
++        self._tela.mostrar_inicio()
++    
++    def _remover_e_voltar(self, grupo_id: int) -> None:
++        if self._remover_grupo(grupo_id):
++            self._voltar_do_grupo()
++    
++    @staticmethod
++    def _resumo_grupo(grupo: Grupo) -> dict:
++        return {"id": grupo.id, "nome": grupo.nome}
++
++    def _listar_convites(self) -> list[dict]:
++        return self._grupo_controller.listar_convites_pendentes()
++
++    def _aceitar_convite(self, convite_id: int) -> bool:
++        return self._grupo_controller.aceitar_convite(convite_id)
++
++    def _rejeitar_convite(self, convite_id: int) -> bool:
++        return self._grupo_controller.rejeitar_convite(convite_id)
++
++    def _listar_grupos(self) -> tuple[list[dict], list[dict]]:
++        grupos = self._grupo_controller.listar_meus_grupos()
++        todos = grupos["organizados"] + grupos["participando"]
++        self._grupos_por_id = {g.id: g for g in todos}
++        return (
++            [self._resumo_grupo(g) for g in grupos["organizados"]],
++            [self._resumo_grupo(g) for g in grupos["participando"]],
++        )
++
++    def _editar_grupo(self, grupo_id: int, nome: str) -> bool:
++        try:
++            self._grupo_controller.editar_grupo(grupo_id, nome)
++        except (CampoInvalidoException, ValueError) as e:
++            self._tela.mostrar_erro(str(e))
++            return False
++
++        grupo = self._grupos_por_id.get(grupo_id)
++        if grupo is not None:
++            grupo.nome = nome
++        self._tela.mostrar_sucesso("Grupo atualizado com sucesso.")
++        return True
++
++    def _remover_grupo(self, grupo_id: int) -> bool:
++        try:
++            self._grupo_controller.remover_grupo(grupo_id)
++        except ValueError as e:
++            self._tela.mostrar_erro(str(e))
++            return False
++
++        self._tela.mostrar_sucesso("Grupo removido com sucesso.")
++        return True
++    
++    # UC15: Emitir relatório de viagem (Implementado por Sarah Meireles)
++    
++    def _abrir_relatorio(self, grupo: Grupo) -> None:
++        tela_grupo = self._tela_grupo
++        if tela_grupo is None:
++            return
++        try:
++            relatorio = self._relatorio_controller.emitir(grupo)
++        except ValueError as erro:
++            tela_grupo.mostrar_erro(str(erro))
++            return
++        except SQLAlchemyError:
++            tela_grupo.mostrar_erro("Não foi possível emitir o relatório.")
++            return
++
++        tela_grupo.pack_forget()
++        self._tela_relatorio = RelatorioView(
++            self._root, relatorio, ao_voltar=self._voltar_do_relatorio
++        )
++
++    def _voltar_do_relatorio(self) -> None:
++        if self._tela_relatorio is not None:
++            self._tela_relatorio.destroy()
++            self._tela_relatorio = None
++        if self._tela_grupo is not None:
++            self._tela_grupo.pack(fill=tk.BOTH, expand=True)
+diff --git a/src/control/RelatorioController.py b/src/control/RelatorioController.py
+new file mode 100644
+index 0000000..0f594f5
+--- /dev/null
++++ b/src/control/RelatorioController.py
+@@ -0,0 +1,42 @@
++from src.control.CustoController import CustoController
++from src.control.ItinerarioController import ItinerarioController
++from src.model.Grupo import Grupo
++
++'''
++User Cases implementados neste arquivo
++
++Sarah Meireles
++UC15: Emitir relatório da viagem
++'''
++
++class RelatorioController:
++    def __init__(self) -> None:
++        self._itinerario_controller = ItinerarioController()
++        self._custo_controller = CustoController()
++
++    def emitir(self, grupo: Grupo) -> dict:
++        dias = self._itinerario_controller.listar_dias(grupo.id)
++        custos = self._custo_controller.dividir_custos(grupo, dias)
++
++        organizador = grupo.organizador
++        membros = [organizador.nome] + [
++            i.nome for i in grupo.integrantes if i.id != organizador.id
++        ]
++
++        dias_relatorio = []
++        for numero, (dia, custo) in enumerate(zip(dias, custos["dias"]), start=1):
++            dias_relatorio.append({"numero": numero, **dia, **custo})
++
++        return {
++            "nome_grupo": grupo.nome,
++            "organizador": organizador.nome if organizador else "",
++            "membros": membros,
++            "acompanhantes": [a.nome for a in grupo.acompanhantes],
++            "dias": dias_relatorio,
++            "total": custos["total"],
++            "por_viajante": custos["por_viajante"],
++            "quantidade_dias": len(dias),
++            "cidades_visitadas": len({d["cidade"].strip().lower() for d in dias}),
++            "data_inicial": dias[0]["data"] if dias else None,
++            "data_final": dias[-1]["data"] if dias else None,
++        }
+\ No newline at end of file
+diff --git a/src/control/ViajanteController.py b/src/control/ViajanteController.py
+index 3b20461..6229f93 100644
+--- a/src/control/ViajanteController.py
++++ b/src/control/ViajanteController.py
+@@ -1,16 +1,16 @@
+ from src.exception.CampoInvalidoException import CampoInvalidoException
+ from src.DAOs.ViajanteDAO import ViajanteDAO
+ from src.model.Viajante import Viajante
+-from src.view.ViajanteView import ViajanteView
+ from email_validator import validate_email, EmailNotValidError
+ from datetime import datetime, date
+ from src.util.seguranca import *
++from typing import Optional
++
+ 
+ class ViajanteController:
+ 
+     def __init__(self) -> None:
+         self._viajante_dao = ViajanteDAO()
+-        self._tela = ViajanteView()
+ 
+     # UC01: Cadastrar viajante (Implementado por Sarah Meireles)
+     
+@@ -47,9 +47,7 @@ class ViajanteController:
+ 
+         return nascimento
+     
+-    def cadastrar_viajante(self) -> None:
+-        dados = self._tela.cria_viajante()
+-        
++    def cadastrar_viajante(self, dados: dict[str, str]) -> Optional[str]:
+         try:
+             self._validar_nome(dados["nome"])
+             
+@@ -75,7 +73,34 @@ class ViajanteController:
+             self._viajante_dao.criar(viajante)
+ 
+         except CampoInvalidoException as e:
+-            self._tela.mostra_mensagem(str(e))
+-        
+-        else:
+-            self._tela.mostra_mensagem("Cadastro realizado com sucesso")
+\ No newline at end of file
++            return str(e)
++
++        return None
++
++    def validar_credenciais(
++        self, credenciais: dict[str, str]
++    ) -> Optional[Viajante]:
++
++        registro = self._viajante_dao.buscar_por_email(credenciais["email"])
++
++        if registro is None:
++            return None
++
++        if registro.email is None or registro.senha is None:
++            return None
++
++        if verifica_senha(credenciais["senha"], registro.senha):
++            return Viajante(
++                id=registro.id,
++                nome=registro.nome,
++                data_nascimento=registro.data_nascimento,
++                email=registro.email,
++                senha=registro.senha,
++            )
++
++        return None
++
++    def viajante_existe(self, viajante: Viajante) -> bool:
++        viajante = self._viajante_dao.buscar_por_id(viajante.id)
++
++        return True if viajante else False
+diff --git a/src/model/Acompanhante.py b/src/model/Acompanhante.py
+index 4018c1e..87ca055 100644
+--- a/src/model/Acompanhante.py
++++ b/src/model/Acompanhante.py
+@@ -12,11 +12,27 @@ if TYPE_CHECKING:
+ 
+ class Acompanhante:
+     def __init__(
+-      self, 
+-      id: int, 
+-      nome: str, 
+-      viajante_vinculado: Viajante = None
++      self,
++      id: int | None = None,
++      nome: str = "",
++      viajante_vinculado: Viajante | None = None,
+     ) -> None:
+         self._id = id
+         self._nome = nome
+         self._viajante_vinculado = viajante_vinculado
++
++    @property
++    def id(self) -> int | None:
++        return self._id
++
++    @id.setter
++    def id(self, value: int | None) -> None:
++        self._id = value
++
++    @property
++    def nome(self) -> str:
++        return self._nome
++
++    @property
++    def viajante_vinculado(self) -> Viajante | None:
++        return self._viajante_vinculado
+diff --git a/src/model/Convite.py b/src/model/Convite.py
+index 5c33492..a19709b 100644
+--- a/src/model/Convite.py
++++ b/src/model/Convite.py
+@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
+ from src.model.StatusConvite import StatusConvite
+ 
+ if TYPE_CHECKING:
++    from src.model.Grupo import Grupo
+     from src.model.Viajante import Viajante
+ 
+ class Convite:
+@@ -18,8 +19,36 @@ class Convite:
+         remetente: Viajante,
+         id: int | None = None,
+         status: StatusConvite = StatusConvite.PENDENTE,
++        grupo: Grupo | None = None,
+     ) -> None:
+         self._id = id
+         self._destinatario = destinatario
+         self._remetente = remetente
+-        self._status = status
+\ No newline at end of file
++        self._status = status
++        self._grupo = grupo
++
++    @property
++    def id(self) -> int | None:
++        return self._id
++
++    @property
++    def destinatario(self) -> Viajante:
++        return self._destinatario
++
++    @property
++    def remetente(self) -> Viajante:
++        return self._remetente
++
++    @property
++    def status(self) -> StatusConvite:
++        return self._status
++
++    @property
++    def grupo(self) -> Grupo | None:
++        return self._grupo
++
++    def aceitar(self) -> None:
++        self._status = StatusConvite.ACEITO
++
++    def rejeitar(self) -> None:
++        self._status = StatusConvite.REJEITADO
+\ No newline at end of file
+diff --git a/src/model/Grupo.py b/src/model/Grupo.py
+index 73b74fb..4850e23 100644
+--- a/src/model/Grupo.py
++++ b/src/model/Grupo.py
+@@ -43,6 +43,10 @@ class Grupo:
+     def nome(self) -> str:
+         return self._nome
+ 
++    @nome.setter
++    def nome(self, value: str) -> None:
++        self._nome = value
++
+     @property
+     def organizador(self) -> Viajante | None:
+         return self._organizador
+diff --git a/src/persistence/models.py b/src/persistence/models.py
+index 12fabb6..442112f 100644
+--- a/src/persistence/models.py
++++ b/src/persistence/models.py
+@@ -44,6 +44,14 @@ class ViajanteRecord(Base):
+     reservas: Mapped[list["ReservaRecord"]] = relationship(
+         back_populates="titular"
+     )
++    convites_recebidos: Mapped[list["ConviteRecord"]] = relationship(
++        foreign_keys="ConviteRecord.destinatario_id",
++        back_populates="destinatario",
++    )
++    convites_enviados: Mapped[list["ConviteRecord"]] = relationship(
++        foreign_keys="ConviteRecord.remetente_id",
++        back_populates="remetente",
++    )
+ 
+ 
+ class GrupoRecord(Base):
+@@ -70,8 +78,42 @@ class GrupoRecord(Base):
+     )
+     itinerario: Mapped["ItinerarioRecord | None"] = relationship(
+         back_populates="grupo",
++        cascade="save-update, merge, delete",
+         uselist=False,
+     )
++    convites: Mapped[list["ConviteRecord"]] = relationship(
++        back_populates="grupo",
++        cascade="all, delete-orphan",
++    )
++
++
++class ConviteRecord(Base):
++    __tablename__ = "convites"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    grupo_id: Mapped[int] = mapped_column(
++        ForeignKey("grupos.id"),
++        nullable=False,
++    )
++    destinatario_id: Mapped[int] = mapped_column(
++        ForeignKey("viajantes.id"),
++        nullable=False,
++    )
++    remetente_id: Mapped[int] = mapped_column(
++        ForeignKey("viajantes.id"),
++        nullable=False,
++    )
++    status: Mapped[str] = mapped_column(String(20), nullable=False, default="Pendente")
++
++    grupo: Mapped["GrupoRecord"] = relationship(back_populates="convites")
++    destinatario: Mapped["ViajanteRecord"] = relationship(
++        foreign_keys=[destinatario_id],
++        back_populates="convites_recebidos",
++    )
++    remetente: Mapped["ViajanteRecord"] = relationship(
++        foreign_keys=[remetente_id],
++        back_populates="convites_enviados",
++    )
+ 
+ 
+ class AcompanhanteRecord(Base):
+@@ -126,8 +168,8 @@ class ReservaRecord(Base):
+         ForeignKey("itinerarios.id"),
+         nullable=True,
+     )
+-
+     titular: Mapped["ViajanteRecord"] = relationship(back_populates="reservas")
+     itinerario: Mapped["ItinerarioRecord | None"] = relationship(
+         back_populates="reservas"
+     )
++    data: Mapped[date | None] = mapped_column(Date, nullable=True)
+diff --git a/src/util/email.py b/src/util/email.py
+new file mode 100644
+index 0000000..a0a5cab
+--- /dev/null
++++ b/src/util/email.py
+@@ -0,0 +1,38 @@
++import smtplib, ssl
++import os
++from dotenv import load_dotenv
++from threading import Thread
++from email.message import EmailMessage
++
++'''
++User Cases implementados neste arquivo
++
++Maria Helena Melo
++UC08: Enviar notificação de convite de um grupo por e-mail
++'''
++
++load_dotenv()
++
++habilitar_email = False # Manter desativado no desenvolvimento. Se for ativar, preencher variáveis necessárias no .env (SENDER_EMAIL e SENDER_CREDENTIAL)
++
++def setup_email(nome_organizador: str, nome_grupo: str, email_convidado: str):
++
++    msg = EmailMessage()
++    msg.set_content(f'Você foi convidado para o grupo {nome_grupo} por {nome_organizador}!\n Entre no Peregrine para aceitar! \U0001F499') # Esse unicode é o emoji de coração azul
++    msg["Subject"] = "Convite do Peregrine!"
++    msg["From"] = os.getenv("SENDER_EMAIL")
++    msg["To"] = email_convidado
++
++    context=ssl.create_default_context()
++
++    with smtplib.SMTP("smtp.gmail.com", port=587) as smtp: # Se for usar outro provedor muda a parte do gmail
++        smtp.starttls(context=context)
++        smtp.login(msg["From"], os.getenv("SENDER_CREDENTIAL"))
++        smtp.send_message(msg)
++
++# Adicionando thread aqui porque esse envio de e-mail é meio lento e bloqueia a tela
++def enviar_email(nome_organizador: str, nome_grupo: str, email_convidado: str):
++    if habilitar_email:
++        thread = Thread(target=setup_email, args=(nome_organizador, nome_grupo, email_convidado))
++        thread.start()
++
+diff --git a/src/view/AcompanhanteView.py b/src/view/AcompanhanteView.py
+new file mode 100644
+index 0000000..35cc502
+--- /dev/null
++++ b/src/view/AcompanhanteView.py
+@@ -0,0 +1,125 @@
++import tkinter as tk
++from collections.abc import Callable
++from tkinter import messagebox
++
++from src.model.Acompanhante import Acompanhante
++from src.model.Viajante import Viajante
++
++
++class AcompanhanteView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        viajante_logado: Viajante,
++        ao_vincular_acompanhante: Callable[[dict[str, str]], bool],
++        ao_sair: Callable[[], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self._viajante_logado = viajante_logado
++        self._ao_vincular_acompanhante = ao_vincular_acompanhante
++        self._ao_sair = ao_sair
++        self.pack(fill=tk.BOTH, expand=True)
++
++        container = tk.Frame(self)
++        container.pack(fill=tk.BOTH, expand=True)
++        container.grid_rowconfigure(0, weight=1)
++        container.grid_columnconfigure(0, weight=1)
++
++        self._telas: dict[str, tk.Frame] = {}
++        self._criar_tela_inicial(container)
++        self.mostrar_inicio()
++        self.atualizar_acompanhantes(viajante_logado.acompanhantes)
++
++    def _criar_tela(self, container: tk.Frame, nome: str) -> tk.Frame:
++        tela = tk.Frame(container)
++        tela.grid(row=0, column=0, sticky="nsew")
++        self._telas[nome] = tela
++        return tela
++
++    def _criar_tela_inicial(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "inicio")
++        tela.grid_columnconfigure(0, weight=1)
++        tela.grid_rowconfigure(2, weight=1)
++
++        cabecalho = tk.Frame(tela)
++        cabecalho.grid(row=0, column=0, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(cabecalho, text="Voltar", command=self._ao_sair).grid(
++            row=0, column=0, sticky=tk.W
++        )
++        tk.Label(
++            tela,
++            text=f"Acompanhantes de {self._viajante_logado.nome}",
++            font=("TkDefaultFont", 18, "bold"),
++        ).grid(row=1, column=0, sticky=tk.W, pady=(24, 8))
++
++        lista_container = tk.Frame(tela)
++        lista_container.grid(row=2, column=0, sticky="nsew")
++        lista_container.grid_rowconfigure(0, weight=1)
++        lista_container.grid_columnconfigure(0, weight=1)
++        self._lista_acompanhantes = tk.Listbox(lista_container)
++        self._lista_acompanhantes.grid(row=0, column=0, sticky="nsew")
++        scrollbar = tk.Scrollbar(
++            lista_container,
++            orient=tk.VERTICAL,
++            command=self._lista_acompanhantes.yview,
++        )
++        scrollbar.grid(row=0, column=1, sticky="ns")
++        self._lista_acompanhantes.configure(yscrollcommand=scrollbar.set)
++        self._mensagem_vazia = tk.Label(
++            lista_container, text="Nenhum acompanhante cadastrado."
++        )
++        self._mensagem_vazia.grid(row=0, column=0, sticky="nsew")
++        self._lista_acompanhantes.grid_remove()
++
++        tk.Label(tela, text="Nome do acompanhante").grid(
++            row=3, column=0, sticky=tk.W, pady=(16, 4)
++        )
++        formulario = tk.Frame(tela)
++        formulario.grid(row=4, column=0, sticky="ew")
++        formulario.grid_columnconfigure(0, weight=1)
++        self._entrada_nome = tk.Entry(formulario)
++        self._entrada_nome.grid(row=0, column=0, sticky="ew")
++        self._entrada_nome.bind("<Return>", self._enviar_acompanhante)
++        tk.Button(
++            formulario,
++            text="Adicionar",
++            command=self._enviar_acompanhante,
++        ).grid(row=0, column=1, padx=(8, 0))
++
++    def _mostrar_tela(self, nome: str) -> None:
++        self._telas[nome].tkraise()
++
++    def mostrar_inicio(self) -> None:
++        self._mostrar_tela("inicio")
++
++    def atualizar_acompanhantes(
++        self, acompanhantes: list[Acompanhante]
++    ) -> None:
++        self._lista_acompanhantes.delete(0, tk.END)
++        if not acompanhantes:
++            self._lista_acompanhantes.grid_remove()
++            self._mensagem_vazia.grid(row=0, column=0, sticky="nsew")
++            return
++
++        self._mensagem_vazia.grid_remove()
++        self._lista_acompanhantes.grid()
++        for acompanhante in acompanhantes:
++            self._lista_acompanhantes.insert(tk.END, acompanhante.nome)
++
++    def mostrar_erro(self, mensagem: str) -> None:
++        messagebox.showerror("Peregrine", mensagem, parent=self)
++
++    def mostrar_sucesso(self, mensagem: str) -> None:
++        messagebox.showinfo("Peregrine", mensagem, parent=self)
++
++    def _enviar_acompanhante(self, event: tk.Event | None = None) -> None:
++        if event is not None:
++            event.widget.focus_set()
++        nome = self._entrada_nome.get().strip()
++        if self._ao_vincular_acompanhante({"nome": nome}):
++            self._entrada_nome.delete(0, tk.END)
++            self._entrada_nome.focus_set()
++            self.atualizar_acompanhantes(
++                self._viajante_logado.acompanhantes
++            )
+diff --git a/src/view/GrupoDetalheView.py b/src/view/GrupoDetalheView.py
+new file mode 100644
+index 0000000..c995d46
+--- /dev/null
++++ b/src/view/GrupoDetalheView.py
+@@ -0,0 +1,285 @@
++import tkinter as tk
++from tkinter import messagebox, simpledialog
++from collections.abc import Callable
++from dataclasses import dataclass
++from functools import partial
++from typing import Literal
++
++from src.model.Acompanhante import Acompanhante
++
++POR_PAGINA = 3
++
++
++@dataclass(frozen=True)
++class ParticipanteGrupo:
++    id: int | None
++    nome: str
++    tipo: Literal["organizador", "participante", "acompanhante"]
++
++
++class GrupoDetalheView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        nome_grupo: str,
++        participantes: list[ParticipanteGrupo],
++        eh_organizador: bool,
++        ao_voltar: Callable[[], None],
++        ao_renomear: Callable[[str], bool],
++        ao_remover: Callable[[], None],
++        ao_convidar_integrante: Callable[[str], None],
++        ao_remover_participante: Callable[[ParticipanteGrupo], None],
++        ao_adicionar_acompanhante: Callable[[], None],
++        ao_abrir_itinerario: Callable[[], None],
++        ao_abrir_relatorio: Callable[[], None],
++        ao_sair_do_grupo: Callable[[], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self._ao_renomear = ao_renomear
++        self._ao_remover = ao_remover
++        self._ao_convidar_integrante = ao_convidar_integrante
++        self._ao_remover_participante = ao_remover_participante
++        self._ao_sair_do_grupo = ao_sair_do_grupo
++        self._eh_organizador = eh_organizador
++        self._participantes = participantes
++        self._pagina = 0
++        self.pack(fill=tk.BOTH, expand=True)
++        self.grid_columnconfigure(0, weight=1)
++        self.grid_columnconfigure(1, weight=1)
++
++        # Cabeçalho
++        cabecalho = tk.Frame(self)
++        cabecalho.grid(row=0, column=0, columnspan=2, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(cabecalho, text="<", width=3, command=ao_voltar).grid(
++            row=0, column=0
++        )
++        tk.Label(cabecalho, text="Grupo", fg="gray").grid(row=0, column=1)
++        if eh_organizador:
++            botao_editar = tk.Menubutton(
++                cabecalho, text="✎", relief=tk.RAISED, width=3
++            )
++            menu = tk.Menu(botao_editar, tearoff=0)
++            menu.add_command(label="Renomear grupo", command=self._renomear)
++            menu.add_command(label="Remover grupo", command=self._remover)
++            botao_editar.config(menu=menu)
++            botao_editar.grid(row=0, column=2)
++
++        # Nome do grupo
++        self._rotulo_nome = tk.Label(
++            self, text=nome_grupo, font=("TkDefaultFont", 18, "bold"), wraplength=360
++        )
++        self._rotulo_nome.grid(row=1, column=0, columnspan=2, pady=(24, 16))
++
++        # Participantes (uma "linha" por pessoa, POR_PAGINA por página)
++        self._area_participantes = tk.Frame(self)
++        self._area_participantes.grid(row=2, column=0, columnspan=2, sticky="ew")
++        self._area_participantes.grid_columnconfigure(0, weight=1)
++
++        navegacao = tk.Frame(self)
++        navegacao.grid(row=3, column=0, columnspan=2, sticky="e", pady=(8, 0))
++        self._botao_anterior = tk.Button(
++            navegacao, text="<", width=3, command=self._pagina_anterior
++        )
++        self._botao_anterior.pack(side=tk.LEFT)
++        self._botao_proxima = tk.Button(
++            navegacao, text=">", width=3, command=self._proxima_pagina
++        )
++        self._botao_proxima.pack(side=tk.LEFT, padx=(4, 0))
++
++        acoes = tk.Frame(self)
++        acoes.grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
++        if eh_organizador:
++            tk.Button(
++                acoes, text="+ Adicionar participante", command=self._convidar_integrante
++            ).pack(side=tk.LEFT, padx=(0, 8))
++        tk.Button(
++            acoes, text="+ Adicionar acompanhante", command=ao_adicionar_acompanhante
++        ).pack(side=tk.LEFT)
++        if not eh_organizador:
++            tk.Button(
++                acoes,
++                text="Sair do grupo",
++                command=self._confirmar_saida_do_grupo,
++            ).pack(side=tk.LEFT, padx=(8, 0))
++
++        # Rodapé
++        self.grid_rowconfigure(5, weight=1)
++        tk.Button(self, text="Itinerário", command=ao_abrir_itinerario).grid(
++            row=6, column=0, sticky="ew", padx=(0, 6), pady=(16, 0)
++        )
++        tk.Button(self, text="Relatório", command=ao_abrir_relatorio).grid(
++            row=6, column=1, sticky="ew", padx=(6, 0), pady=(16, 0)
++        )
++
++        self._desenhar_pagina()
++
++    def selecionar_acompanhantes(self, acompanhantes: list[Acompanhante]) -> list[int]:
++        if not acompanhantes:
++            messagebox.showinfo(
++                "Adicionar acompanhantes",
++                "Nenhum acompanhante disponível para adicionar a este grupo.",
++                parent=self,
++            )
++            return []
++
++        dialogo = _SelecaoAcompanhantes(self, acompanhantes)
++        return dialogo.result or []
++
++    def adicionar_participantes(self, participantes: list[ParticipanteGrupo]) -> None:
++        self._pagina = len(self._participantes) // POR_PAGINA
++        self._participantes.extend(participantes)
++        self._desenhar_pagina()
++
++    def atualizar_participantes(self, participantes: list[ParticipanteGrupo]) -> None:
++        self._participantes = participantes
++        self._desenhar_pagina()
++
++    def mostrar_erro(self, mensagem: str) -> None:
++        messagebox.showerror("Peregrine", mensagem, parent=self)
++
++    def mostrar_sucesso(self, mensagem: str) -> None:
++        messagebox.showinfo("Peregrine", mensagem, parent=self)
++
++    def _desenhar_pagina(self) -> None:
++        for filho in self._area_participantes.winfo_children():
++            filho.destroy()
++
++        ultima = max(0, (len(self._participantes) - 1) // POR_PAGINA)
++        self._pagina = min(self._pagina, ultima)
++        inicio = self._pagina * POR_PAGINA
++        for participante in self._participantes[inicio : inicio + POR_PAGINA]:
++            linha = tk.Frame(self._area_participantes, bg="#e8eaed")
++            linha.pack(fill=tk.X, pady=4)
++            if self._eh_organizador and participante.tipo != "organizador":
++                tk.Button(
++                    linha,
++                    text="×",
++                    width=3,
++                    command=partial(self._confirmar_remocao_participante, participante),
++                ).pack(side=tk.RIGHT, padx=(0, 6))
++            nome = participante.nome
++            if participante.tipo != "participante":
++                nome = f"{nome} ({participante.tipo})"
++            tk.Label(
++                linha,
++                text=f"👤  {nome}",
++                anchor="w",
++                bg="#e8eaed",
++                padx=12,
++                pady=10,
++            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
++
++        self._botao_anterior.config(
++            state=tk.NORMAL if self._pagina > 0 else tk.DISABLED
++        )
++        self._botao_proxima.config(
++            state=tk.NORMAL if self._pagina < ultima else tk.DISABLED
++        )
++
++    def _convidar_integrante(self) -> None:
++        email = simpledialog.askstring(
++            "Adicionar participante", "E-mail do viajante cadastrado", parent=self
++        )
++        if email is not None:
++            self._ao_convidar_integrante(email)
++
++    def _confirmar_remocao_participante(self, participante: ParticipanteGrupo) -> None:
++        mensagem = f'Deseja remover "{participante.nome}" do grupo?'
++        if participante.tipo == "participante":
++            mensagem += "\nOs acompanhantes desse participante também sairão do grupo."
++        if messagebox.askyesno(
++            "Remover do grupo", mensagem, default=messagebox.NO, parent=self
++        ):
++            self._ao_remover_participante(participante)
++
++    def _confirmar_saida_do_grupo(self) -> None:
++        if messagebox.askyesno(
++            "Sair do grupo",
++            "Deseja sair deste grupo? Seus acompanhantes também serão removidos.",
++            default=messagebox.NO,
++            parent=self,
++        ):
++            self._ao_sair_do_grupo()
++
++    def _pagina_anterior(self) -> None:
++        self._pagina -= 1
++        self._desenhar_pagina()
++
++    def _proxima_pagina(self) -> None:
++        self._pagina += 1
++        self._desenhar_pagina()
++        
++    def _renomear(self) -> None:
++        nome = simpledialog.askstring(
++            "Renomear grupo",
++            "Novo nome do grupo (1 a 20 caracteres)",
++            initialvalue=self._rotulo_nome.cget("text"),
++            parent=self,
++        )
++        if nome is not None and self._ao_renomear(nome.strip()):
++            self._rotulo_nome.config(text=nome.strip())
++
++    def _remover(self) -> None:
++        if messagebox.askyesno(
++            "Remover grupo",
++            "Deseja remover este grupo?",
++            default=messagebox.NO,
++            parent=self,
++        ):
++            self._ao_remover()
++
++
++class _SelecaoAcompanhantes(simpledialog.Dialog):
++    def __init__(self, master: tk.Misc, acompanhantes: list[Acompanhante]) -> None:
++        self._acompanhantes = acompanhantes
++        super().__init__(master, title="Adicionar acompanhantes")
++
++    def body(self, master: tk.Misc) -> tk.Listbox:
++        tk.Label(master, text="Selecione os acompanhantes para adicionar.").grid(
++            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
++        )
++        self._lista = tk.Listbox(
++            master, selectmode=tk.MULTIPLE, height=min(len(self._acompanhantes), 8)
++        )
++        self._lista.grid(row=1, column=0, sticky="nsew")
++        barra = tk.Scrollbar(master, command=self._lista.yview)
++        barra.grid(row=1, column=1, sticky="ns")
++        barra_horizontal = tk.Scrollbar(
++            master, orient=tk.HORIZONTAL, command=self._lista.xview
++        )
++        barra_horizontal.grid(row=2, column=0, sticky="ew")
++        self._lista.config(yscrollcommand=barra.set, xscrollcommand=barra_horizontal.set)
++
++        for acompanhante in self._acompanhantes:
++            responsavel = acompanhante.viajante_vinculado
++            rotulo = acompanhante.nome
++            if responsavel is not None:
++                rotulo = f"{rotulo} — {responsavel.nome}"
++            self._lista.insert(tk.END, rotulo)
++        return self._lista
++
++    def buttonbox(self) -> None:
++        botoes = tk.Frame(self)
++        botoes.pack(pady=(0, 8))
++        tk.Button(botoes, text="Cancelar", command=self.cancel).pack(side=tk.LEFT)
++        tk.Button(botoes, text="Adicionar", command=self.ok).pack(
++            side=tk.LEFT, padx=(8, 0)
++        )
++        self.bind("<Return>", self.ok)
++        self.bind("<Escape>", self.cancel)
++
++    def validate(self) -> bool:
++        if not self._lista.curselection():
++            messagebox.showerror(
++                "Adicionar acompanhantes",
++                "Selecione pelo menos um acompanhante.",
++                parent=self,
++            )
++            return False
++        return True
++
++    def apply(self) -> None:
++        self.result = [
++            self._acompanhantes[indice].id for indice in self._lista.curselection()
++        ]
+diff --git a/src/view/GrupoView.py b/src/view/GrupoView.py
+index 749a151..8c4b40a 100644
+--- a/src/view/GrupoView.py
++++ b/src/view/GrupoView.py
+@@ -16,7 +16,9 @@ class GrupoView(View):
+ 
+         return valores_input
+ 
+-    def exibe_grupo(self, nome: str, organizador: str, integrantes: list[dict]) -> str:
++    def exibe_grupo(
++        self, nome: str, organizador: str, integrantes: list[dict], *, eh_organizador: bool
++    ) -> str:
+         print(f"\nGrupo: {nome}")
+         print(f"Organizador: {organizador}")
+         print("Participantes:")
+@@ -26,8 +28,9 @@ class GrupoView(View):
+         for numero, integrante in enumerate(integrantes, start=1):
+             print(f"  {numero}. {integrante['nome']} - {integrante['email']}")
+  
+-        print("\n1 - Adicionar viajante")
+-        print("2 - Selecionar participante")
++        if eh_organizador:
++            print("\n1 - Adicionar viajante")
++            print("2 - Selecionar participante")
+         print("0 - Voltar")
+         return input("Opção: ").strip()
+  
+@@ -68,8 +71,22 @@ class GrupoView(View):
+  
+         if escolha == "0":
+             return None
+-        if not escolha.isdigit() or not 1 <= int(escolha) <= len(nomes):
++
++        try:
++            indice = int(escolha) - 1
++        except ValueError:
++            indice = -1
++
++        if not escolha.isdecimal() or not 0 <= indice < len(nomes):
+             self.mostra_mensagem("Grupo inválido.")
+             return None
+- 
+-        return int(escolha) - 1
+\ No newline at end of file
++
++        return indice
++
++    def solicita_novo_nome(self, nome_atual: str) -> str:
++        print(f"Nome atual: {nome_atual}")
++        return input("Novo nome do grupo (1 a 20 caracteres): ").strip()
++
++    def confirma_remocao_grupo(self, nome: str) -> bool:
++        resposta = input(f'Deseja remover o grupo "{nome}"? S/N ')
++        return resposta.strip().upper() == "S"
+diff --git a/src/view/InicioView.py b/src/view/InicioView.py
+index 50cd17d..d3f144a 100644
+--- a/src/view/InicioView.py
++++ b/src/view/InicioView.py
+@@ -1,17 +1,134 @@
+ # Entrega 3: Implementado por Sarah Meireles
++import tkinter as tk
++from collections.abc import Callable
++from tkinter import messagebox
+ 
+-from src.view.View import View
+ 
++class InicioView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        ao_entrar: Callable[[dict[str, str]], None],
++        ao_cadastrar: Callable[[dict[str, str]], None],
++        ao_abrir_menu: Callable[[], None],
++        ao_sair: Callable[[], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self._ao_entrar = ao_entrar
++        self._ao_cadastrar = ao_cadastrar
++        self._ao_abrir_menu = ao_abrir_menu
++        self._ao_sair = ao_sair
++        self.pack(fill=tk.BOTH, expand=True)
+ 
+-class InicioView(View):
++        container = tk.Frame(self)
++        container.pack(fill=tk.BOTH, expand=True)
++        container.grid_rowconfigure(0, weight=1)
++        container.grid_columnconfigure(0, weight=1)
+ 
+-    def exibe_menu_inicial(self) -> str:
+-        print("\n=== Peregrine ===")
+-        print("1 - Cadastrar usuário")
+-        print("2 - Entrar")
+-        print("0 - Sair")
+-        return input("Opção: ").strip()
+-    
+-    # login provisório, caso de uso ainda não implementado, está apenas para testar o fluxo do sistema
+-    def solicita_email_login(self) -> str:
+-        return input("\nE-mail: ").strip().lower()
+\ No newline at end of file
++        self._telas: dict[str, tk.Frame] = {}
++        self._criar_tela_inicial(container)
++        self._criar_tela_login(container)
++        self._criar_tela_cadastro(container)
++        self.mostrar_inicio()
++
++    def _criar_tela(self, container: tk.Frame, nome: str) -> tk.Frame:
++        tela = tk.Frame(container)
++        tela.grid(row=0, column=0, sticky="nsew")
++        self._telas[nome] = tela
++        return tela
++
++    def _criar_tela_inicial(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "inicio")
++        tk.Label(tela, text="Peregrine", font=("TkDefaultFont", 20, "bold")).pack(
++            pady=(24, 16)
++        )
++        tk.Button(tela, text="Entrar", command=self.mostrar_login).pack(
++            fill=tk.X, pady=4
++        )
++        tk.Button(tela, text="Cadastrar viajante", command=self.mostrar_cadastro).pack(
++            fill=tk.X, pady=4
++        )
++        tk.Button(tela, text="Sair", command=self._ao_sair).pack(
++            fill=tk.X, pady=(16, 4)
++        )
++
++    def _criar_tela_login(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "login")
++        tk.Label(tela, text="Entrar", font=("TkDefaultFont", 18, "bold")).pack(
++            pady=(16, 12)
++        )
++        tk.Label(tela, text="E-mail").pack(anchor=tk.W)
++        self._email_login = tk.Entry(tela)
++        self._email_login.pack(fill=tk.X, pady=(0, 8))
++        tk.Label(tela, text="Senha").pack(anchor=tk.W)
++        self._senha_login = tk.Entry(tela, show="*")
++        self._senha_login.pack(fill=tk.X, pady=(0, 12))
++        tk.Button(tela, text="Entrar", command=self._enviar_login).pack(
++            fill=tk.X, pady=4
++        )
++        tk.Button(tela, text="Voltar", command=self.mostrar_inicio).pack(
++            fill=tk.X, pady=4
++        )
++
++    def _criar_tela_cadastro(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "cadastro")
++        tk.Label(
++            tela, text="Cadastrar viajante", font=("TkDefaultFont", 18, "bold")
++        ).pack(pady=(8, 8))
++
++        self._campos_cadastro: dict[str, tk.Entry] = {}
++        campos = (
++            ("nome", "Nome", ""),
++            ("email", "E-mail", ""),
++            ("senha", "Senha", "*"),
++            ("confirmar_senha", "Confirmar senha", "*"),
++            ("data_nascimento", "Data de nascimento (dd/mm/aaaa)", ""),
++        )
++        for chave, rotulo, mascara in campos:
++            tk.Label(tela, text=rotulo).pack(anchor=tk.W)
++            entrada = tk.Entry(tela, show=mascara)
++            entrada.pack(fill=tk.X, pady=(0, 6))
++            self._campos_cadastro[chave] = entrada
++
++        tk.Button(tela, text="Cadastrar", command=self._enviar_cadastro).pack(
++            fill=tk.X, pady=(6, 4)
++        )
++        tk.Button(tela, text="Voltar", command=self.mostrar_inicio).pack(
++            fill=tk.X, pady=4
++        )
++
++    def _mostrar_tela(self, nome: str) -> None:
++        self._telas[nome].tkraise()
++
++    def mostrar_inicio(self) -> None:
++        self._mostrar_tela("inicio")
++
++    def mostrar_login(self) -> None:
++        self._mostrar_tela("login")
++        self._email_login.focus_set()
++
++    def mostrar_cadastro(self) -> None:
++        self._mostrar_tela("cadastro")
++        self._campos_cadastro["nome"].focus_set()
++
++    def mostrar_erro(self, mensagem: str) -> None:
++        messagebox.showerror("Peregrine", mensagem, parent=self)
++
++    def mostrar_sucesso(self, mensagem: str) -> None:
++        messagebox.showinfo("Peregrine", mensagem, parent=self)
++
++    def _enviar_login(self) -> None:
++        email = self._email_login.get().strip().lower()
++        senha = self._senha_login.get()
++        if not email or not senha:
++            self.mostrar_erro("Informe o e-mail e a senha.")
++            return
++        self._ao_entrar({"email": email, "senha": senha})
++
++    def _enviar_cadastro(self) -> None:
++        dados = {
++            chave: entrada.get().strip()
++            for chave, entrada in self._campos_cadastro.items()
++        }
++        dados["email"] = dados["email"].lower()
++        self._ao_cadastrar(dados)
+diff --git a/src/view/ItinerarioView.py b/src/view/ItinerarioView.py
+new file mode 100644
+index 0000000..0217bb1
+--- /dev/null
++++ b/src/view/ItinerarioView.py
+@@ -0,0 +1,494 @@
++import tkinter as tk
++from collections.abc import Callable
++from datetime import date, datetime
++import math
++from tkinter import messagebox, ttk
++
++
++class ItinerarioView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        nome_grupo: str,
++        dias: list[dict[str, str]],
++        ao_voltar: Callable[[], None],
++        participantes: list[tuple[int, str]],
++        ao_adicionar: Callable[[dict], bool],
++        ao_editar: Callable[[str, dict], bool],
++        ao_remover: Callable[[list[str]], bool],
++        pode_adicionar: bool,
++        ao_abrir_sugestoes: Callable[[], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self.pack(fill=tk.BOTH, expand=True)
++        self._dias = list(dias)
++        self._participantes = participantes
++        self._pode_adicionar = pode_adicionar
++        self._ao_adicionar = ao_adicionar
++        self._ao_editar = ao_editar
++        self._ao_remover = ao_remover
++        self._modo_edicao = False
++        self._selecao_dias: dict[str, tk.BooleanVar] = {}
++        self._data_original: str | None = None
++        self._reservas: list[
++            tuple[tk.Entry, tk.Entry, ttk.Combobox]
++        ] = []
++        self._tela_inicial = tk.Frame(self)
++        self._tela_inicial.pack(fill=tk.BOTH, expand=True)
++        self._tela_inicial.grid_columnconfigure(0, weight=1)
++        self._tela_inicial.grid_rowconfigure(2, weight=1)
++        self._tela_criacao = tk.Frame(self)
++
++        cabecalho = tk.Frame(self._tela_inicial)
++        cabecalho.grid(row=0, column=0, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(cabecalho, text="<", width=3, command=ao_voltar).grid(
++            row=0, column=0, sticky=tk.W
++        )
++        self._botao_editar_modo = tk.Button(
++            cabecalho,
++            text="✎",
++            width=3,
++            command=self._alternar_modo_edicao,
++        )
++        if self._pode_adicionar:
++            self._botao_editar_modo.grid(row=0, column=2, sticky=tk.E)
++
++        tk.Label(
++            self._tela_inicial,
++            text=nome_grupo,
++            font=("TkDefaultFont", 18, "bold"),
++            wraplength=360,
++            justify=tk.CENTER,
++        ).grid(row=1, column=0, sticky="ew", pady=(24, 16))
++
++        lista_dias = tk.Frame(self._tela_inicial)
++        lista_dias.grid(row=2, column=0, sticky="nsew")
++        lista_dias.grid_rowconfigure(0, weight=1)
++        lista_dias.grid_columnconfigure(0, weight=1)
++        canvas = tk.Canvas(lista_dias, highlightthickness=0)
++        canvas.grid(row=0, column=0, sticky="nsew")
++        barra = tk.Scrollbar(
++            lista_dias, orient=tk.VERTICAL, command=canvas.yview
++        )
++        barra.grid(row=0, column=1, sticky="ns")
++        canvas.configure(yscrollcommand=barra.set)
++
++        area_dias = tk.Frame(canvas)
++        janela = canvas.create_window((0, 0), window=area_dias, anchor="nw")
++        area_dias.bind(
++            "<Configure>",
++            lambda evento: canvas.configure(
++                scrollregion=(0, 0, evento.width, evento.height)
++            ),
++        )
++        canvas.bind(
++            "<Configure>",
++            lambda evento: canvas.itemconfigure(janela, width=evento.width),
++        )
++        area_dias.grid_columnconfigure(0, weight=1)
++        self._area_dias = area_dias
++
++        self._acoes_normais = tk.Frame(self._tela_inicial)
++        self._acoes_normais.grid(
++            row=3, column=0, sticky="ew", pady=(12, 0)
++        )
++        if self._pode_adicionar:
++            tk.Button(
++                self._acoes_normais,
++                text="+ Adicionar ao itinerário",
++                command=self._mostrar_criacao,
++            ).pack(side=tk.LEFT)
++            tk.Button(
++                self._acoes_normais, text="Sugestões", command=ao_abrir_sugestoes
++            ).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(8, 0))
++        else:
++            tk.Button(
++                self._acoes_normais,
++                text="Sugerir itinerário",
++                command=self._mostrar_criacao,
++            ).pack(side=tk.LEFT)
++        self._acoes_edicao = tk.Frame(self._tela_inicial)
++        self._acoes_edicao.grid(
++            row=3, column=0, sticky="ew", pady=(12, 0)
++        )
++        self._acoes_edicao.grid_columnconfigure(0, weight=1)
++        self._acoes_edicao.grid_columnconfigure(1, weight=1)
++        self._botao_remover = tk.Button(
++            self._acoes_edicao,
++            text="Remover",
++            command=self._remover_selecionados,
++            state=tk.DISABLED,
++        )
++        self._botao_remover.grid(row=0, column=0, sticky="ew", padx=(0, 4))
++        self._botao_editar_dia = tk.Button(
++            self._acoes_edicao,
++            text="Editar",
++            command=self._editar_selecionado,
++            state=tk.DISABLED,
++        )
++        self._botao_editar_dia.grid(row=0, column=1, sticky="ew", padx=(4, 0))
++        self._acoes_edicao.grid_remove()
++        self._criar_tela_criacao()
++        self.atualizar_dias(dias)
++
++    def atualizar_dias(self, dias: list[dict[str, str]]) -> None:
++        self._dias = list(dias)
++        self._selecao_dias.clear()
++        for filho in self._area_dias.winfo_children():
++            filho.destroy()
++
++        if not dias:
++            tk.Label(
++                self._area_dias, text="Nenhum dia adicionado ao itinerário."
++            ).grid(row=0, column=0, sticky="n", pady=8)
++            self._atualizar_botoes_edicao()
++            return
++
++        for indice, dia in enumerate(dias):
++            linha = tk.Frame(self._area_dias)
++            linha.grid(row=indice, column=0, sticky="ew", pady=4)
++            coluna_cartao = 0
++            data_iso = self._data_iso(dia)
++            if self._modo_edicao:
++                variavel = tk.BooleanVar(master=self, value=False)
++                self._selecao_dias[data_iso] = variavel
++                tk.Checkbutton(
++                    linha,
++                    variable=variavel,
++                    command=self._atualizar_botoes_edicao,
++                ).grid(row=0, column=0, padx=(0, 4))
++                coluna_cartao = 1
++
++            item = tk.Frame(linha, bg="#e8eaed", padx=12, pady=8)
++            item.grid(row=0, column=coluna_cartao, sticky="ew")
++            linha.grid_columnconfigure(coluna_cartao, weight=1)
++            item.grid_columnconfigure(0, weight=1)
++            tk.Label(
++                item,
++                text=dia["data"],
++                font=("TkDefaultFont", 11, "bold"),
++                anchor="w",
++                bg="#e8eaed",
++            ).grid(row=0, column=0, sticky="ew")
++            tk.Label(
++                item, text=dia["passeio"], anchor="w", bg="#e8eaed"
++            ).grid(row=1, column=0, sticky="ew")
++            tk.Label(
++                item, text=dia["cidade"], anchor="w", bg="#e8eaed"
++            ).grid(row=2, column=0, sticky="ew")
++        self._atualizar_botoes_edicao()
++
++    @staticmethod
++    def _data_iso(dia: dict[str, str]) -> str:
++        return datetime.strptime(dia["data"], "%d/%m/%Y").date().isoformat()
++
++    def _alternar_modo_edicao(self) -> None:
++        self._modo_edicao = not self._modo_edicao
++        self._botao_editar_modo.config(
++            relief=tk.SUNKEN if self._modo_edicao else tk.RAISED
++        )
++        if self._modo_edicao:
++            self._acoes_normais.grid_remove()
++            self._acoes_edicao.grid()
++        else:
++            self._acoes_edicao.grid_remove()
++            self._acoes_normais.grid()
++        self.atualizar_dias(self._dias)
++
++    def _atualizar_botoes_edicao(self) -> None:
++        selecionados = sum(
++            variavel.get() for variavel in self._selecao_dias.values()
++        )
++        self._botao_remover.config(
++            state=tk.NORMAL if selecionados else tk.DISABLED
++        )
++        self._botao_editar_dia.config(
++            state=tk.NORMAL if selecionados == 1 else tk.DISABLED
++        )
++
++    def _selecionados(self) -> list[str]:
++        return [
++            data
++            for data, variavel in self._selecao_dias.items()
++            if variavel.get()
++        ]
++
++    def _remover_selecionados(self) -> None:
++        datas = self._selecionados()
++        if not datas or not messagebox.askyesno(
++            "Remover dias",
++            f"Deseja remover {len(datas)} dia(s) do itinerário?",
++            default=messagebox.NO,
++            parent=self,
++        ):
++            return
++        if not self._ao_remover(datas):
++            return
++
++        datas_removidas = set(datas)
++        self.atualizar_dias(
++            [dia for dia in self._dias if self._data_iso(dia) not in datas_removidas]
++        )
++
++    def _editar_selecionado(self) -> None:
++        datas = self._selecionados()
++        if len(datas) != 1:
++            return
++        dia = next(dia for dia in self._dias if self._data_iso(dia) == datas[0])
++        self._mostrar_criacao(dia)
++
++    def _mostrar_criacao(self, dia: dict[str, str] | None = None) -> None:
++        self._data_original = None
++        self._limpar_formulario()
++        if dia is not None:
++            data = datetime.strptime(dia["data"], "%d/%m/%Y").date()
++            self._data_original = data.isoformat()
++            self._entrada_data.insert(0, dia["data"])
++            self._entrada_cidade.insert(0, dia["cidade"])
++            self._entrada_passeio.insert(0, dia["passeio"])
++            
++            reservas = dia.get("reservas", [])
++            if reservas:
++                for filho in self._area_reservas.winfo_children():
++                    filho.destroy() # destrói bloco vazio no começo
++                self._reservas.clear()
++                ids = [id_ for id_, _ in self._participantes]
++                for reserva in reservas:
++                    self._adicionar_reserva()
++                    nome, preco, titular = self._reservas[-1]
++                    nome.insert(0, reserva["nome"])
++                    preco.insert(0, f"{reserva['preco']:.2f}".replace(".", ","))
++                    if reserva["titular_id"] in ids:
++                        titular.current(ids.index(reserva["titular_id"]))
++
++        self._tela_inicial.pack_forget()
++        self._tela_criacao.pack(fill=tk.BOTH, expand=True)
++
++    def _mostrar_inicio(self) -> None:
++        self._tela_criacao.pack_forget()
++        self._tela_inicial.pack(fill=tk.BOTH, expand=True)
++
++    def _limpar_formulario(self) -> None:
++        self._entrada_data.delete(0, tk.END)
++        self._entrada_cidade.delete(0, tk.END)
++        self._entrada_passeio.delete(0, tk.END)
++        for reserva in self._area_reservas.winfo_children():
++            reserva.destroy()
++        self._reservas.clear()
++        self._adicionar_reserva()
++
++    def _criar_tela_criacao(self) -> None:
++        self._tela_criacao.grid_columnconfigure(0, weight=1)
++        self._tela_criacao.grid_rowconfigure(1, weight=1)
++
++        cabecalho = tk.Frame(self._tela_criacao)
++        cabecalho.grid(row=0, column=0, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(
++            cabecalho, text="<", width=3, command=self._mostrar_inicio
++        ).grid(row=0, column=0, sticky=tk.W)
++
++        formulario = tk.Frame(self._tela_criacao)
++        formulario.grid(row=1, column=0, sticky="nsew", pady=(16, 8))
++        formulario.grid_rowconfigure(0, weight=1)
++        formulario.grid_columnconfigure(0, weight=1)
++        self._canvas_criacao = tk.Canvas(formulario, highlightthickness=0)
++        self._canvas_criacao.grid(row=0, column=0, sticky="nsew")
++        barra = tk.Scrollbar(
++            formulario,
++            orient=tk.VERTICAL,
++            command=self._canvas_criacao.yview,
++        )
++        barra.grid(row=0, column=1, sticky="ns")
++        self._canvas_criacao.configure(yscrollcommand=barra.set)
++
++        self._conteudo_criacao = tk.Frame(self._canvas_criacao)
++        janela = self._canvas_criacao.create_window(
++            (0, 0), window=self._conteudo_criacao, anchor="nw"
++        )
++        self._conteudo_criacao.bind(
++            "<Configure>",
++            lambda evento: self._canvas_criacao.configure(
++                scrollregion=(0, 0, evento.width, evento.height)
++            ),
++        )
++        self._canvas_criacao.bind(
++            "<Configure>",
++            lambda evento: self._canvas_criacao.itemconfigure(
++                janela, width=evento.width
++            ),
++        )
++        self._conteudo_criacao.grid_columnconfigure(0, weight=1)
++
++        self._entrada_data = self._adicionar_campo("Dia", 0)
++        self._entrada_cidade = self._adicionar_campo("Cidade", 2)
++        self._entrada_passeio = self._adicionar_campo(
++            "Passeio turístico", 4
++        )
++        tk.Label(
++            self._conteudo_criacao,
++            text="Reserva",
++            font=("TkDefaultFont", 11, "bold"),
++        ).grid(row=6, column=0, sticky=tk.W, pady=(16, 4))
++
++        self._area_reservas = tk.Frame(self._conteudo_criacao)
++        self._area_reservas.grid(row=7, column=0, sticky="ew")
++        self._area_reservas.grid_columnconfigure(0, weight=1)
++        tk.Button(
++            self._conteudo_criacao,
++            text="Adicionar mais uma reserva",
++            command=self._adicionar_reserva,
++        ).grid(row=8, column=0, sticky=tk.W, pady=(8, 0))
++        if not self._participantes:
++            tk.Label(
++                self._conteudo_criacao,
++                text="O grupo não possui participantes disponíveis para titular.",
++                wraplength=340,
++                justify=tk.LEFT,
++            ).grid(row=9, column=0, sticky=tk.W, pady=(8, 0))
++
++        tk.Button(
++            self._tela_criacao,
++            text="Adicionar no Itinerário" if self._pode_adicionar else "Enviar sugestão",
++            command=self._enviar_criacao,
++        ).grid(row=2, column=0, sticky="ew", pady=(8, 0))
++        self._adicionar_reserva()
++
++    def _adicionar_campo(self, titulo: str, linha: int) -> tk.Entry:
++        tk.Label(self._conteudo_criacao, text=titulo).grid(
++            row=linha, column=0, sticky=tk.W, pady=(8, 4)
++        )
++        entrada = tk.Entry(self._conteudo_criacao)
++        entrada.grid(row=linha + 1, column=0, sticky="ew")
++        return entrada
++
++    def _adicionar_reserva(self) -> None:
++        indice = len(self._reservas)
++        reserva = tk.Frame(self._area_reservas, bg="#e8eaed", padx=8, pady=6)
++        reserva.grid(row=indice, column=0, sticky="ew", pady=4)
++        reserva.grid_columnconfigure(0, weight=1)
++        tk.Label(
++            reserva,
++            text=f"Reserva {indice + 1}",
++            font=("TkDefaultFont", 10, "bold"),
++            bg="#e8eaed",
++        ).grid(row=0, column=0, sticky=tk.W)
++        tk.Label(reserva, text="Nome da reserva", bg="#e8eaed").grid(
++            row=1, column=0, sticky=tk.W, pady=(4, 2)
++        )
++        entrada_nome = tk.Entry(reserva)
++        entrada_nome.grid(row=2, column=0, sticky="ew")
++        tk.Label(reserva, text="Preço da reserva", bg="#e8eaed").grid(
++            row=3, column=0, sticky=tk.W, pady=(4, 2)
++        )
++        entrada_preco = tk.Entry(reserva)
++        entrada_preco.grid(row=4, column=0, sticky="ew")
++        tk.Label(reserva, text="Titular da reserva", bg="#e8eaed").grid(
++            row=5, column=0, sticky=tk.W, pady=(4, 2)
++        )
++        titular = ttk.Combobox(
++            reserva,
++            state="readonly" if self._participantes else "disabled",
++            values=[nome for _, nome in self._participantes],
++        )
++        titular.grid(row=6, column=0, sticky="ew")
++        if self._participantes:
++            titular.current(0)
++        self._reservas.append((entrada_nome, entrada_preco, titular))
++
++    def _enviar_criacao(self) -> None:
++        data_texto = self._entrada_data.get().strip()
++        try:
++            data = datetime.strptime(data_texto, "%d/%m/%Y").date()
++        except ValueError:
++            self.mostrar_erro("Informe uma data válida no formato DD/MM/AAAA.")
++            return
++
++        cidade = self._entrada_cidade.get().strip()
++        passeio = self._entrada_passeio.get().strip()
++        if not cidade or not passeio:
++            self.mostrar_erro("Informe a cidade e o passeio turístico.")
++            return
++
++        reservas = []
++        for entrada_nome, entrada_preco, titular in self._reservas:
++            nome = entrada_nome.get().strip()
++            preco_texto = entrada_preco.get().strip().replace(",", ".")
++            if not nome and not preco_texto:
++                continue
++            if not nome or not preco_texto:
++                self.mostrar_erro("Preencha o nome e o preço de cada reserva.")
++                return
++
++            try:
++                preco = float(preco_texto)
++            except ValueError:
++                self.mostrar_erro("Informe um preço válido para cada reserva.")
++                return
++            if not math.isfinite(preco) or preco < 0:
++                self.mostrar_erro("Informe um preço válido para cada reserva.")
++                return
++            if not self._participantes:
++                self.mostrar_erro(
++                    "O grupo precisa ter um participante para titular a reserva."
++                )
++                return
++
++            indice_titular = titular.current()
++            if not 0 <= indice_titular < len(self._participantes):
++                self.mostrar_erro("Selecione o titular de cada reserva.")
++                return
++            titular_id, _ = self._participantes[indice_titular]
++            reservas.append(
++                {"nome": nome, "preco": preco, "titular_id": titular_id}
++            )
++
++        dados = {
++            "data": data.isoformat(),
++            "cidade": cidade,
++            "passeio": passeio,
++            "reservas": reservas,
++        }
++        if self._adicionar_dia(dados):
++            self._data_original = None
++            self._limpar_formulario()
++            self._mostrar_inicio()
++            if self._modo_edicao:
++                self._alternar_modo_edicao()
++
++    def _adicionar_dia(self, dados: dict) -> bool:
++        if not self._pode_adicionar:
++            return self._ao_adicionar(dados)
++
++        if self._data_original is None:
++            sucesso = self._ao_adicionar(dados)
++        else:
++            sucesso = self._ao_editar(self._data_original, dados)
++        if not sucesso:
++            return False
++
++        data = date.fromisoformat(dados["data"])
++        dia_atualizado = {
++            "data": data.strftime("%d/%m/%Y"),
++            "passeio": dados["passeio"],
++            "cidade": dados["cidade"],
++            "reservas": dados["reservas"],
++        }
++        dias_atualizados = [
++            dia
++            for dia in self._dias
++            if self._data_iso(dia) != self._data_original
++        ]
++        dias_atualizados.append(dia_atualizado)
++        dias_atualizados.sort(
++            key=lambda dia: datetime.strptime(dia["data"], "%d/%m/%Y").date()
++        )
++        self.atualizar_dias(dias_atualizados)
++        return True
++
++    def mostrar_erro(self, mensagem: str) -> None:
++        messagebox.showerror("Peregrine", mensagem, parent=self)
++
++    def mostrar_sucesso(self, mensagem: str) -> None:
++        messagebox.showinfo("Peregrine", mensagem, parent=self)
+diff --git a/src/view/MenuView.py b/src/view/MenuView.py
+index bb66ef2..8d66d3e 100644
+--- a/src/view/MenuView.py
++++ b/src/view/MenuView.py
+@@ -1,11 +1,308 @@
+-from src.view.View import View
++import tkinter as tk
++from collections.abc import Callable
++from tkinter import messagebox
+ 
+ 
+-class MenuView(View):
++class MenuView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        nome_viajante: str,
++        ao_criar_grupo: Callable[[str, list[str]], bool],
++        ao_listar_grupos: Callable[[], tuple[list[dict], list[dict]]],
++        ao_abrir_acompanhante: Callable[[], None],
++        ao_listar_convites: Callable[[], list[dict]],
++        ao_aceitar_convite: Callable[[int], bool],
++        ao_rejeitar_convite: Callable[[int], bool],
++        ao_sair: Callable[[], None],
++        ao_abrir_grupo: Callable[[int], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self._nome_viajante = nome_viajante
++        self._ao_criar_grupo = ao_criar_grupo
++        self._ao_listar_grupos = ao_listar_grupos
++        self._ao_abrir_acompanhante = ao_abrir_acompanhante
++        self._ao_listar_convites = ao_listar_convites
++        self._ao_aceitar_convite = ao_aceitar_convite
++        self._ao_rejeitar_convite = ao_rejeitar_convite
++        self._ao_sair = ao_sair
++        self._ao_abrir_grupo = ao_abrir_grupo
++        self.pack(fill=tk.BOTH, expand=True)
+ 
+-    def exibe_menu_principal(self) -> str:
+-        print("\n=== Menu ===")
+-        print("1 - Criar grupo")
+-        print("2 - Gerenciar grupo")
+-        print("0 - Sair")
+-        return input("Opção: ").strip()
+\ No newline at end of file
++        container = tk.Frame(self)
++        container.pack(fill=tk.BOTH, expand=True)
++        container.grid_rowconfigure(0, weight=1)
++        container.grid_columnconfigure(0, weight=1)
++
++        self._telas: dict[str, tk.Frame] = {}
++        self._criar_tela_inicial(container)
++        self._criar_tela_criacao(container)
++        self._criar_tela_convites(container)
++        self.mostrar_inicio()
++        self._ao_abrir_grupo = ao_abrir_grupo
++
++    def _criar_tela(self, container: tk.Frame, nome: str) -> tk.Frame:
++        tela = tk.Frame(container)
++        tela.grid(row=0, column=0, sticky="nsew")
++        self._telas[nome] = tela
++        return tela
++
++    def _criar_tela_inicial(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "inicio")
++        tela.grid_columnconfigure(0, weight=1)
++        tela.grid_columnconfigure(1, weight=1)
++        tela.grid_rowconfigure(2, weight=1)
++
++        tk.Label(tela, text=f"Olá, {self._nome_viajante}!").grid(
++            row=0, column=0, sticky=tk.W
++        )
++        botoes_direita = tk.Frame(tela)
++        botoes_direita.grid(row=0, column=1, sticky=tk.E, pady=(12, 0))
++        tk.Button(
++            botoes_direita, text="Acompanhantes", command=self._ao_abrir_acompanhante
++        ).pack(side=tk.RIGHT)
++        tk.Button(
++            botoes_direita,
++            text="Meus Convites",
++            command=self.mostrar_convites,
++        ).pack(side=tk.RIGHT, padx=(0, 8))
++        tk.Label(
++            tela,
++            text="Seus grupos de viagem",
++            font=("TkDefaultFont", 18, "bold"),
++        ).grid(row=1, column=0, columnspan=2, pady=(32, 12))
++
++        area_grupos = tk.Frame(tela)
++        area_grupos.grid(row=2, column=0, columnspan=2, sticky="nsew")
++        area_grupos.grid_columnconfigure(0, weight=1)
++        area_grupos.grid_rowconfigure(0, weight=1)
++        
++        self._itens_grupos: list[dict | None] = []
++        self._lista_grupos = tk.Listbox(
++            area_grupos, exportselection=False, activestyle="none"
++        )
++        self._lista_grupos.grid(row=0, column=0, sticky="nsew")
++        barra = tk.Scrollbar(area_grupos, command=self._lista_grupos.yview)
++        barra.grid(row=0, column=1, sticky="ns")
++        self._lista_grupos.config(yscrollcommand=barra.set)
++        self._lista_grupos.bind("<<ListboxSelect>>", self._ao_selecionar_item_grupo)
++        botoes_esquerda = tk.Frame(tela)
++        botoes_esquerda.grid(row=3, column=0, sticky=tk.W, pady=(12, 0))
++        tk.Button(
++            botoes_esquerda, text="Sair", command=self._ao_sair
++        ).pack(side=tk.LEFT)
++        tk.Button(
++            botoes_esquerda, text="+ Novo", command=self.mostrar_criacao
++        ).pack(side=tk.LEFT, padx=(8, 0))
++
++    def _criar_tela_criacao(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "criar_grupo")
++        tela.grid_columnconfigure(0, weight=1)
++        tela.grid_rowconfigure(4, weight=1)
++
++        cabecalho = tk.Frame(tela)
++        cabecalho.grid(row=0, column=0, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(
++            cabecalho, text="Voltar", command=self._voltar_da_criacao
++        ).grid(row=0, column=0, sticky=tk.W)
++        tk.Label(
++            cabecalho,
++            text="Novo grupo de viagem",
++            font=("TkDefaultFont", 18, "bold"),
++        ).grid(row=0, column=1, padx=12)
++
++        tk.Label(tela, text="Nome do grupo").grid(
++            row=1, column=0, sticky=tk.W, pady=(24, 4)
++        )
++        self._entrada_nome_grupo = tk.Entry(tela)
++        self._entrada_nome_grupo.grid(row=2, column=0, sticky="ew")
++
++        tk.Label(tela, text="Participantes").grid(
++            row=3, column=0, sticky=tk.W, pady=(16, 4)
++        )
++        self._campos_participantes: list[tk.Entry] = []
++        self._container_participantes = tk.Frame(tela)
++        self._container_participantes.grid(
++            row=4, column=0, sticky="new"
++        )
++        self._botao_adicionar_email: tk.Button | None = None
++        self._adicionar_campo_email()
++
++        tk.Button(tela, text="Criar", command=self._enviar_criacao).grid(
++            row=5, column=0, sticky=tk.E, pady=(16, 0)
++        )
++
++    def _criar_tela_convites(self, container: tk.Frame) -> None:
++        tela = self._criar_tela(container, "visualizar_convites")
++        tela.grid_columnconfigure(0, weight=1)
++        tela.grid_rowconfigure(2, weight=1)
++
++        cabecalho = tk.Frame(tela)
++        cabecalho.grid(row=0, column=0, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(
++            cabecalho, text="Voltar", command=self.mostrar_inicio
++        ).grid(row=0, column=0, sticky=tk.W)
++        tk.Label(
++            tela,
++            text="Meus convites",
++            font=("TkDefaultFont", 18, "bold"),
++        ).grid(row=1, column=0, columnspan=2, pady=(32, 12))
++
++        self._container_convites = tk.Frame(tela)
++        self._container_convites.grid(
++            row=2, column=0, sticky="nsew", pady=(24, 0)
++        )
++        self._container_convites.grid_columnconfigure(0, weight=1)
++
++
++    def _adicionar_campo_email(self) -> None:
++        if self._botao_adicionar_email is not None:
++            self._botao_adicionar_email.destroy()
++
++        linha = tk.Frame(self._container_participantes)
++        linha.pack(fill=tk.X, pady=2)
++        linha.grid_columnconfigure(0, weight=1)
++        entrada = tk.Entry(linha)
++        entrada.grid(row=0, column=0, sticky="ew")
++        self._campos_participantes.append(entrada)
++        self._botao_adicionar_email = tk.Button(
++            linha, text="+", command=self._adicionar_campo_email
++        )
++        self._botao_adicionar_email.grid(row=0, column=1, padx=(8, 0))
++
++    def _enviar_criacao(self) -> None:
++        nome = self._entrada_nome_grupo.get().strip()
++        participantes = [
++            entrada.get().strip()
++            for entrada in self._campos_participantes
++            if entrada.get().strip()
++        ]
++        if self._ao_criar_grupo(nome, participantes):
++            self._limpar_formulario_grupo()
++            self.mostrar_inicio()
++
++    def _limpar_formulario_grupo(self) -> None:
++        self._entrada_nome_grupo.delete(0, tk.END)
++        for entrada in self._campos_participantes:
++            entrada.master.destroy()
++        self._campos_participantes.clear()
++        self._botao_adicionar_email = None
++        self._adicionar_campo_email()
++
++    def _voltar_da_criacao(self) -> None:
++        self._limpar_formulario_grupo()
++        self.mostrar_inicio()
++
++    def _mostrar_tela(self, nome: str) -> None:
++        self._telas[nome].tkraise()
++
++    def mostrar_inicio(self) -> None:
++        organizados, participando = self._ao_listar_grupos()
++        self.exibir_grupos(organizados, participando)
++        self._mostrar_tela("inicio")
++
++    def _grupo_selecionado(self) -> dict | None:
++        selecao = self._lista_grupos.curselection()
++        if not self._grupos or not selecao:
++            self.mostrar_erro("Selecione um grupo para continuar.")
++            return None
++        return self._grupos[selecao[0]]
++
++    def mostrar_criacao(self) -> None:
++        self._mostrar_tela("criar_grupo")
++        self._entrada_nome_grupo.focus_set()
++         
++    def exibir_grupos(self, organizados: list[dict], participando: list[dict]) -> None:
++        self._lista_grupos.delete(0, tk.END)
++        self._itens_grupos = []
++        
++        secoes = (
++            ("Grupos que organizo", organizados),
++            ("Grupos em que participo", participando),
++        )
++        for titulo, grupos in secoes:
++            self._lista_grupos.insert(tk.END, titulo)
++            self._lista_grupos.itemconfig(tk.END, foreground="gray")
++            self._itens_grupos.append(None)
++            
++            if not grupos:
++                self._lista_grupos.insert(tk.END, " (nenhum)")
++                self._lista_grupos.itemconfig(tk.END, foreground="gray")
++                self._itens_grupos.append(None)
++                
++            for grupo in grupos:
++                self._lista_grupos.insert(tk.END, f" {grupo['nome']}")
++                self._itens_grupos.append(grupo)
++                
++    def _ao_selecionar_item_grupo(self, _evento=None) -> None:
++        selecao = self._lista_grupos.curselection()
++        if not selecao:
++            return
++        
++        grupo = self._itens_grupos[selecao[0]]
++        self._lista_grupos.selection_clear(0, tk.END)
++        if grupo is None:
++            return
++        
++        self._ao_abrir_grupo(grupo["id"])
++
++    def mostrar_convites(self) -> None:
++        self._atualizar_lista_convites()
++        self._mostrar_tela("visualizar_convites")
++
++    def _atualizar_lista_convites(self) -> None:
++        for widget in self._container_convites.winfo_children():
++            widget.destroy()
++
++        convites = self._ao_listar_convites()
++        if not convites:
++            tk.Label(
++                self._container_convites,
++                text="Você não possui convites pendentes.",
++            ).grid(row=0, column=0, columnspan=2)
++            return
++
++        for indice, convite in enumerate(convites):
++            linha = tk.Frame(self._container_convites)
++            linha.grid(row=indice, column=0, sticky="ew", pady=4)
++            linha.grid_columnconfigure(0, weight=1)
++
++            tk.Label(
++                linha,
++                text=convite["nome_grupo"],
++                font=("TkDefaultFont", 11),
++            ).grid(row=0, column=0, sticky=tk.W)
++
++            botoes = tk.Frame(linha)
++            botoes.grid(row=0, column=1, sticky=tk.E)
++            tk.Button(
++                botoes,
++                text="Aceitar",
++                command=lambda convite_id=convite["id"]: self._responder_convite(
++                    convite_id, True
++                ),
++            ).pack(side=tk.LEFT)
++            tk.Button(
++                botoes,
++                text="Rejeitar",
++                command=lambda convite_id=convite["id"]: self._responder_convite(
++                    convite_id, False
++                ),
++            ).pack(side=tk.LEFT, padx=(8, 0))
++
++    def _responder_convite(self, convite_id: int, aceitar: bool) -> None:
++        sucesso = (
++            self._ao_aceitar_convite(convite_id)
++            if aceitar
++            else self._ao_rejeitar_convite(convite_id)
++        )
++        if sucesso:
++            self._atualizar_lista_convites()
++
++    def mostrar_erro(self, mensagem: str) -> None:
++        messagebox.showerror("Peregrine", mensagem, parent=self)
++
++    def mostrar_sucesso(self, mensagem: str) -> None:
++        messagebox.showinfo("Peregrine", mensagem, parent=self)
+diff --git a/src/view/RelatorioView.py b/src/view/RelatorioView.py
+new file mode 100644
+index 0000000..3f08bcd
+--- /dev/null
++++ b/src/view/RelatorioView.py
+@@ -0,0 +1,122 @@
++# UC15: Emitir relatório de viagem (Implementado por Sarah Meireles)
++
++import tkinter as tk
++from collections.abc import Callable
++
++FUNDO_CARTAO = "#e8eaed"
++
++
++def _reais(valor: float) -> str:
++    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
++
++
++class RelatorioView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        relatorio: dict,
++        ao_voltar: Callable[[], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self.pack(fill=tk.BOTH, expand=True)
++        self.grid_columnconfigure(0, weight=1)
++        self.grid_rowconfigure(1, weight=1)
++
++        tk.Button(self, text="<", width=3, command=ao_voltar).grid(
++            row=0, column=0, sticky=tk.W
++        )
++
++        area = tk.Frame(self)
++        area.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
++        area.grid_rowconfigure(0, weight=1)
++        area.grid_columnconfigure(0, weight=1)
++        canvas = tk.Canvas(area, highlightthickness=0)
++        canvas.grid(row=0, column=0, sticky="nsew")
++        barra = tk.Scrollbar(area, orient=tk.VERTICAL, command=canvas.yview)
++        barra.grid(row=0, column=1, sticky="ns")
++        canvas.configure(yscrollcommand=barra.set)
++
++        self._conteudo = tk.Frame(canvas)
++        janela = canvas.create_window((0, 0), window=self._conteudo, anchor="nw")
++        self._conteudo.bind(
++            "<Configure>",
++            lambda e: canvas.configure(scrollregion=(0, 0, e.width, e.height)),
++        )
++        canvas.bind(
++            "<Configure>", lambda e: canvas.itemconfigure(janela, width=e.width)
++        )
++
++        self._montar(relatorio)
++
++    def _texto(self, texto: str, **opcoes) -> None:
++        tk.Label(
++            self._conteudo, text=texto, wraplength=340, justify=tk.CENTER, **opcoes
++        ).pack(fill=tk.X, pady=2)
++
++    def _secao(self, titulo: str) -> None:
++        self._texto(titulo, fg="gray", font=("TkDefaultFont", 12, "bold"))
++
++    @staticmethod
++    def _linhas_viajantes(pai: tk.Misc, por_viajante: list[dict]) -> None:
++        for v in por_viajante:
++            tk.Label(
++                pai,
++                text=f"     {v['nome']} ({v['cotas']} cota(s)): {_reais(v['valor'])}",
++                anchor="w",
++                justify=tk.LEFT,
++                bg=FUNDO_CARTAO,
++            ).pack(fill=tk.X)
++
++    def _montar(self, r: dict) -> None:
++        self._texto(r["nome_grupo"], font=("TkDefaultFont", 18, "bold"))
++        self._texto(f"Organizador: {r['organizador']}")
++        self._texto(f"Membros: {', '.join(r['membros']) or '(nenhum)'}")
++        self._texto(f"Acompanhantes: {', '.join(r['acompanhantes']) or '(nenhum)'}")
++
++        tk.Frame(self._conteudo, height=12).pack()
++        self._secao("Itinerário")
++        if not r["dias"]:
++            self._texto("Nenhum dia adicionado ao itinerário.")
++
++        for dia in r["dias"]:
++            cartao = tk.Frame(self._conteudo, bg=FUNDO_CARTAO, padx=12, pady=8)
++            cartao.pack(fill=tk.X, pady=4)
++            tk.Label(
++                cartao,
++                text=f"Dia {dia['numero']} ({dia['data']}): {dia['cidade']} | {dia['passeio']}",
++                font=("TkDefaultFont", 10, "bold"),
++                anchor="w",
++                justify=tk.LEFT,
++                wraplength=320,
++                bg=FUNDO_CARTAO,
++            ).pack(fill=tk.X)
++
++            for reserva in dia["reservas"]:
++                tk.Label(
++                    cartao,
++                    text=f"• {reserva['nome']}: {_reais(reserva['total'])}",
++                    anchor="w",
++                    justify=tk.LEFT,
++                    wraplength=320,
++                    bg=FUNDO_CARTAO,
++                ).pack(fill=tk.X, pady=(4, 0))
++
++            tk.Label(
++                cartao,
++                text=f"Total do dia: {_reais(dia['total'])}",
++                font=("TkDefaultFont", 10, "bold"),
++                anchor="w",
++                justify=tk.LEFT,
++                bg=FUNDO_CARTAO,
++            ).pack(fill=tk.X, pady=(8, 0))
++            self._linhas_viajantes(cartao, dia["por_viajante"])
++
++        tk.Frame(self._conteudo, height=12).pack()
++        self._secao("Dados")
++        self._texto(f"Valor total: {_reais(r['total'])}")
++        for v in r["por_viajante"]:
++            self._texto(f"{v['nome']} ({v['cotas']} cota(s)): {_reais(v['valor'])}")
++        self._texto(f"Quantidade de dias: {r['quantidade_dias']}")
++        self._texto(f"Cidades visitadas: {r['cidades_visitadas']}")
++        self._texto(f"Data inicial: {r['data_inicial'] or '-'}")
++        self._texto(f"Data final: {r['data_final'] or '-'}")
+\ No newline at end of file
+diff --git a/src/view/SugestoesItinerarioView.py b/src/view/SugestoesItinerarioView.py
+new file mode 100644
+index 0000000..888c6cf
+--- /dev/null
++++ b/src/view/SugestoesItinerarioView.py
+@@ -0,0 +1,91 @@
++import tkinter as tk
++from collections.abc import Callable
++
++
++class SugestoesItinerarioView(tk.Frame):
++    def __init__(
++        self,
++        master: tk.Misc,
++        sugestoes: list[dict],
++        ao_voltar: Callable[[], None],
++    ) -> None:
++        super().__init__(master, padx=24, pady=24)
++        self.pack(fill=tk.BOTH, expand=True)
++        self.grid_columnconfigure(0, weight=1)
++        self.grid_rowconfigure(1, weight=1)
++
++        cabecalho = tk.Frame(self)
++        cabecalho.grid(row=0, column=0, sticky="ew")
++        cabecalho.grid_columnconfigure(1, weight=1)
++        tk.Button(cabecalho, text="<", width=3, command=ao_voltar).grid(
++            row=0, column=0, sticky=tk.W
++        )
++        tk.Label(
++            cabecalho, text="Sugestões de itinerário", font=("TkDefaultFont", 14, "bold")
++        ).grid(row=0, column=1)
++
++        if not sugestoes:
++            tk.Label(self, text="Nenhuma sugestão recebida.").grid(
++                row=1, column=0, sticky=tk.N, pady=(24, 0)
++            )
++            return
++
++        area = tk.Frame(self)
++        area.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
++        area.grid_rowconfigure(0, weight=1)
++        area.grid_columnconfigure(0, weight=1)
++        canvas = tk.Canvas(area, highlightthickness=0)
++        canvas.grid(row=0, column=0, sticky="nsew")
++        barra = tk.Scrollbar(area, orient=tk.VERTICAL, command=canvas.yview)
++        barra.grid(row=0, column=1, sticky="ns")
++        canvas.configure(yscrollcommand=barra.set)
++
++        lista = tk.Frame(canvas)
++        janela = canvas.create_window((0, 0), window=lista, anchor="nw")
++        lista.bind(
++            "<Configure>",
++            lambda evento: canvas.configure(
++                scrollregion=(0, 0, evento.width, evento.height)
++            ),
++        )
++        canvas.bind(
++            "<Configure>",
++            lambda evento: canvas.itemconfigure(janela, width=evento.width),
++        )
++
++        for sugestao in sugestoes:
++            self._adicionar_cartao(lista, sugestao)
++
++    @staticmethod
++    def _adicionar_cartao(lista: tk.Frame, sugestao: dict) -> None:
++        cartao = tk.Frame(lista, bg="#e8eaed")
++        cartao.pack(fill=tk.X, pady=(0, 8))
++        detalhes = tk.Frame(cartao, bg="#e8eaed", padx=12, pady=8)
++        titulo = f"{sugestao['data']} · {sugestao['cidade']}\nSugerido por {sugestao['autor']}"
++
++        def alternar_detalhes() -> None:
++            if detalhes.winfo_manager():
++                detalhes.pack_forget()
++                botao.config(text=f"▸ {titulo}")
++            else:
++                detalhes.pack(fill=tk.X)
++                botao.config(text=f"▾ {titulo}")
++
++        botao = tk.Button(
++            cartao, text=f"▸ {titulo}", command=alternar_detalhes,
++            anchor=tk.W, justify=tk.LEFT, wraplength=252,
++        )
++        botao.pack(fill=tk.X)
++
++        tk.Label(
++            detalhes, text=sugestao["passeio"], wraplength=252, anchor=tk.W,
++            justify=tk.LEFT, bg="#e8eaed", font=("TkDefaultFont", 10, "bold"),
++        ).pack(fill=tk.X)
++
++        for reserva in sugestao["reservas"]:
++            preco = f"R$ {reserva['preco']:.2f}".replace(".", ",")
++            tk.Label(
++                detalhes,
++                text=f"{reserva['nome']} · {preco}\nTitular {reserva['titular']}",
++                wraplength=252, anchor=tk.W, justify=tk.LEFT, bg="#e8eaed",
++            ).pack(fill=tk.X, pady=(6, 0))
