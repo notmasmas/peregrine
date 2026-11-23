@@ -9,6 +9,23 @@ from src.view.GrupoView import GrupoView
 from email_validator import validate_email, EmailNotValidError
 from src.util.email import enviar_email
 
+'''
+User Cases implementados neste arquivo
+
+Gustavo de Pinho
+UC04: Editar e remover grupos de viagem
+UC06: Convidar, visualizar e excluir viajantes
+UC10: Adicionar acompanhante ao grupo de viagem
+
+
+Maria Helena Machado Melo
+UC03: Criar grupo de viagem
+UC05: Entrar ou sair de um grupo de viagem
+
+Sarah Meireles
+UC07: Visualizar grupos de viagem
+'''
+
 class GrupoController:
 
     def __init__(

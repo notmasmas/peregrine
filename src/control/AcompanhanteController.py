@@ -10,6 +10,13 @@ from src.model.Acompanhante import Acompanhante
 from src.model.Viajante import Viajante
 from src.view.AcompanhanteView import AcompanhanteView
 
+'''
+User Cases implementados neste arquivo
+
+Maria Helena Melo
+UC09: Vincular acompanhante à conta
+'''
+
 
 class AcompanhanteController:
 

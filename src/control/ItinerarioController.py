@@ -2,6 +2,16 @@ from datetime import date
 
 from src.DAOs.ItinerarioDAO import ItinerarioDAO
 
+'''
+User Cases implementados neste arquivo
+
+Gustavo de Pinho
+UC12: Sugerir mudanças no itinerário
+UC13: Aprovar sugestão de alteração
+
+Maria Helena Melo
+UC11: Criar e alterar itinerário de viagem
+'''
 
 class ItinerarioController:
     def __init__(self) -> None:

@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 from threading import Thread
 from email.message import EmailMessage
 
+'''
+User Cases implementados neste arquivo
+
+Maria Helena Melo
+UC08: Enviar notificação de convite de um grupo por e-mail
+'''
+
 load_dotenv()
 
 habilitar_email = False # Manter desativado no desenvolvimento. Se for ativar, preencher variáveis necessárias no .env (SENDER_EMAIL e SENDER_CREDENTIAL)
