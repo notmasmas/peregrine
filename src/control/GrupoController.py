@@ -342,7 +342,8 @@ class GrupoController:
     # UC07: Visualizar grupos de viagem (Implementado por Sarah Meireles)
     
     def _para_grupo(self, registro) -> Grupo:
-        if registro.organizador_id == self._organizador.id:
+        eh_organizador = registro.organizador_id == self._organizador.id
+        if eh_organizador:
             organizador = self._organizador
         elif registro.organizador is not None:
             organizador = self._para_viajante(registro.organizador)
@@ -354,7 +355,7 @@ class GrupoController:
             nome=registro.nome,
             organizador=organizador,
             integrantes=[self._para_viajante(i) for i in registro.integrantes],
-            sugestoes=registro.sugestoes or {},
+            sugestoes=(registro.sugestoes or {}) if eh_organizador else {},
         )
         
     def listar_meus_grupos(self) -> dict[str, list[Grupo]]:

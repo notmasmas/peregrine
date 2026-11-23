@@ -14,6 +14,7 @@ from src.control.GrupoController import GrupoController
 from src.control.ItinerarioController import ItinerarioController
 from src.exception.CampoInvalidoException import CampoInvalidoException
 from src.view.ItinerarioView import ItinerarioView
+from src.view.SugestoesItinerarioView import SugestoesItinerarioView
 from src.control.RelatorioController import RelatorioController
 from src.view.RelatorioView import RelatorioView
 
@@ -35,6 +36,7 @@ class MenuController:
         self._grupos_por_id: dict[int, Grupo] = {}
         self._tela_grupo: Optional[GrupoDetalheView] = None
         self._tela_itinerario: Optional[ItinerarioView] = None
+        self._tela_sugestoes_itinerario: Optional[SugestoesItinerarioView] = None
         self._relatorio_controller = RelatorioController()
         self._tela_relatorio: Optional[RelatorioView] = None
         self._tela = MenuView(
@@ -131,6 +133,10 @@ class MenuController:
             tela_grupo.mostrar_erro("Não foi possível carregar o itinerário do grupo.")
             return
 
+        eh_organizador = (
+            grupo.organizador is not None
+            and grupo.organizador.id == self._viajante_logado.id
+        )
         tela_grupo.pack_forget()
         self._tela_itinerario = ItinerarioView(
             self._root,
@@ -138,12 +144,9 @@ class MenuController:
             dias=dias,
             ao_voltar=self._voltar_do_itinerario,
             participantes=self._participantes_reserva(grupo),
-            pode_adicionar=(
-                grupo.organizador is not None
-                and grupo.organizador.id == self._viajante_logado.id
-            ),
-            ao_adicionar=lambda dados: self._adicionar_dia_itinerario(
-                grupo_id, dados
+            pode_adicionar=eh_organizador,
+            ao_adicionar=lambda dados: self._salvar_dia_itinerario(
+                grupo_id, dados, como_sugestao=not eh_organizador
             ),
             ao_editar=lambda data_original, dados: self._editar_dia_itinerario(
                 grupo_id, data_original, dados
@@ -151,6 +154,7 @@ class MenuController:
             ao_remover=lambda datas: self._remover_dias_itinerario(
                 grupo_id, datas
             ),
+            ao_abrir_sugestoes=lambda: self._abrir_sugestoes_itinerario(grupo_id),
         )
 
     @staticmethod
@@ -165,35 +169,47 @@ class MenuController:
                 ids_adicionados.add(viajante.id)
         return participantes
 
-    def _adicionar_dia_itinerario(self, grupo_id: int, dados: dict) -> bool:
+    def _salvar_dia_itinerario(
+        self, grupo_id: int, dados: dict, *, como_sugestao: bool
+    ) -> bool:
         tela = self._tela_itinerario
         if tela is None:
             return False
         viajante_id = self._viajante_logado.id
         if viajante_id is None:
-            tela.mostrar_erro("Faça login antes de adicionar ao itinerário.")
+            tela.mostrar_erro("Faça login antes de enviar o dia de viagem.")
             return False
+        salvar = (
+            self._itinerario_controller.sugerir_dia
+            if como_sugestao
+            else self._itinerario_controller.adicionar_dia
+        )
         try:
-            self._itinerario_controller.adicionar_dia(
-                grupo_id, viajante_id, dados
-            )
+            salvar(grupo_id, viajante_id, dados)
         except ValueError as erro:
             tela.mostrar_erro(str(erro))
             return False
         except SQLAlchemyError:
-            tela.mostrar_erro("Não foi possível adicionar o dia ao itinerário.")
+            tela.mostrar_erro(
+                "Não foi possível enviar a sugestão."
+                if como_sugestao
+                else "Não foi possível adicionar o dia ao itinerário."
+            )
             return False
+        if como_sugestao:
+            tela.mostrar_sucesso("Sugestão enviada ao organizador.")
         return True
 
     def _editar_dia_itinerario(
         self, grupo_id: int, data_original: str, dados: dict
     ) -> bool:
         tela = self._tela_itinerario
-        if tela is None:
+        viajante_id = self._viajante_logado.id
+        if tela is None or viajante_id is None:
             return False
         try:
             self._itinerario_controller.editar_dia(
-                grupo_id, data_original, dados
+                grupo_id, viajante_id, data_original, dados
             )
         except ValueError as erro:
             tela.mostrar_erro(str(erro))
@@ -207,10 +223,11 @@ class MenuController:
         self, grupo_id: int, datas: list[str]
     ) -> bool:
         tela = self._tela_itinerario
-        if tela is None:
+        viajante_id = self._viajante_logado.id
+        if tela is None or viajante_id is None:
             return False
         try:
-            self._itinerario_controller.remover_dias(grupo_id, datas)
+            self._itinerario_controller.remover_dias(grupo_id, viajante_id, datas)
         except ValueError as erro:
             tela.mostrar_erro(str(erro))
             return False
@@ -218,6 +235,35 @@ class MenuController:
             tela.mostrar_erro("Não foi possível remover os dias do itinerário.")
             return False
         return True
+
+    def _abrir_sugestoes_itinerario(self, grupo_id: int) -> None:
+        tela = self._tela_itinerario
+        viajante_id = self._viajante_logado.id
+        if tela is None or viajante_id is None:
+            return
+
+        try:
+            sugestoes = self._itinerario_controller.listar_sugestoes(
+                grupo_id, viajante_id
+            )
+        except ValueError as erro:
+            tela.mostrar_erro(str(erro))
+            return
+        except SQLAlchemyError:
+            tela.mostrar_erro("Não foi possível carregar as sugestões de itinerário.")
+            return
+
+        tela.pack_forget()
+        self._tela_sugestoes_itinerario = SugestoesItinerarioView(
+            self._root, sugestoes, ao_voltar=self._voltar_das_sugestoes_itinerario
+        )
+
+    def _voltar_das_sugestoes_itinerario(self) -> None:
+        if self._tela_sugestoes_itinerario is not None:
+            self._tela_sugestoes_itinerario.destroy()
+            self._tela_sugestoes_itinerario = None
+        if self._tela_itinerario is not None:
+            self._tela_itinerario.pack(fill=tk.BOTH, expand=True)
 
     def _voltar_do_itinerario(self) -> None:
         if self._tela_itinerario is not None:

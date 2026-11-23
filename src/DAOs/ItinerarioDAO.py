@@ -2,7 +2,7 @@ from datetime import date
 import math
 
 from sqlalchemy import select, delete, func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session
 
 from src.database import SessionLocal
 from src.persistence.models import (
@@ -13,6 +13,23 @@ from src.persistence.models import (
 
 
 class ItinerarioDAO:
+    @staticmethod
+    def _buscar_grupo(
+        session: Session, grupo_id: int, *, bloquear: bool = False
+    ) -> GrupoRecord:
+        grupo = session.get(GrupoRecord, grupo_id, with_for_update=bloquear)
+        if grupo is None:
+            raise ValueError("Grupo não encontrado.")
+        return grupo
+
+    def _buscar_grupo_do_organizador(
+        self, session: Session, grupo_id: int, viajante_id: int, *, bloquear: bool = False
+    ) -> GrupoRecord:
+        grupo = self._buscar_grupo(session, grupo_id, bloquear=bloquear)
+        if viajante_id is None or grupo.organizador_id != viajante_id:
+            raise ValueError("Apenas o organizador pode realizar esta ação.")
+        return grupo
+
     def listar_programacao(self, grupo_id: int) -> dict:
         with SessionLocal() as session:
             itinerario = session.scalar(
@@ -37,31 +54,10 @@ class ItinerarioDAO:
         reservas: list[tuple[str, float, int]],
     ) -> None:
         with SessionLocal() as session:
-            grupo = session.scalar(
-                select(GrupoRecord)
-                .where(GrupoRecord.id == grupo_id)
-                .options(selectinload(GrupoRecord.integrantes))
+            grupo = self._buscar_grupo_do_organizador(
+                session, grupo_id, viajante_id, bloquear=True
             )
-            if grupo is None:
-                raise ValueError("Grupo não encontrado.")
-            if grupo.organizador_id != viajante_id:
-                raise ValueError(
-                    "Apenas o dono do grupo pode adicionar dias ao itinerário."
-                )
-
-            titulares_validos = {integrante.id for integrante in grupo.integrantes}
-            if grupo.organizador_id is not None:
-                titulares_validos.add(grupo.organizador_id)
-
-            for nome, preco, titular_id in reservas:
-                if not nome.strip():
-                    raise ValueError("Informe o nome de todas as reservas.")
-                if not math.isfinite(preco) or preco < 0:
-                    raise ValueError("Informe um preço válido para cada reserva.")
-                if titular_id not in titulares_validos:
-                    raise ValueError(
-                        "O titular da reserva deve ser um participante do grupo."
-                    )
+            self._validar_reservas(grupo, reservas)
 
             itinerario = session.scalar(
                 select(ItinerarioRecord)
@@ -101,6 +97,7 @@ class ItinerarioDAO:
     def editar_dia(
         self,
         grupo_id: int,
+        viajante_id: int,
         data_original: date,
         data_nova: date,
         cidade: str,
@@ -108,26 +105,10 @@ class ItinerarioDAO:
         reservas: list[tuple[str, float, int]],
     ) -> None:
         with SessionLocal() as session:
-            grupo = session.scalar(
-                select(GrupoRecord)
-                .where(GrupoRecord.id == grupo_id)
-                .options(selectinload(GrupoRecord.integrantes))
+            grupo = self._buscar_grupo_do_organizador(
+                session, grupo_id, viajante_id, bloquear=True
             )
-            if grupo is None:
-                raise ValueError("Grupo não encontrado.")
-
-            titulares_validos = {integrante.id for integrante in grupo.integrantes}
-            if grupo.organizador_id is not None:
-                titulares_validos.add(grupo.organizador_id)
-            for nome, preco, titular_id in reservas:
-                if not nome.strip():
-                    raise ValueError("Informe o nome de todas as reservas.")
-                if not math.isfinite(preco) or preco < 0:
-                    raise ValueError("Informe um preço válido para cada reserva.")
-                if titular_id not in titulares_validos:
-                    raise ValueError(
-                        "O titular da reserva deve ser um participante do grupo."
-                    )
+            self._validar_reservas(grupo, reservas)
 
             itinerario = session.scalar(
                 select(ItinerarioRecord)
@@ -177,8 +158,13 @@ class ItinerarioDAO:
             self._recalcular_total(session, itinerario)
             session.commit()
 
-    def remover_dias(self, grupo_id: int, datas: set[date]) -> None:
+    def remover_dias(
+        self, grupo_id: int, viajante_id: int, datas: set[date]
+    ) -> None:
         with SessionLocal() as session:
+            self._buscar_grupo_do_organizador(
+                session, grupo_id, viajante_id, bloquear=True
+            )
             itinerario = session.scalar(
                 select(ItinerarioRecord)
                 .where(ItinerarioRecord.grupo_id == grupo_id)
@@ -211,6 +197,75 @@ class ItinerarioDAO:
             )
             self._recalcular_total(session, itinerario)
             session.commit()
+
+    def sugerir_dia(
+        self,
+        grupo_id: int,
+        viajante_id: int,
+        data: date,
+        cidade: str,
+        passeio: str,
+        reservas: list[tuple[str, float, int]],
+    ) -> None:
+        with SessionLocal() as session:
+            grupo = self._buscar_grupo(session, grupo_id, bloquear=True)
+            autor = next(
+                (membro for membro in grupo.integrantes if membro.id == viajante_id), None
+            )
+            if autor is None or grupo.organizador_id == viajante_id:
+                raise ValueError("Apenas participantes do grupo podem enviar sugestões.")
+
+            titulares = self._validar_reservas(grupo, reservas)
+            sugestao = {
+                "autor": autor.nome,
+                "data": data.isoformat(),
+                "cidade": cidade,
+                "passeio": passeio,
+                "reservas": [
+                    {"nome": nome, "preco": preco, "titular": titulares[titular_id]}
+                    for nome, preco, titular_id in reservas
+                ],
+            }
+            sugestoes = self._sugestoes_itinerario(grupo)
+            grupo.sugestoes = {
+                **(grupo.sugestoes or {}),
+                "itinerario": [*sugestoes, sugestao],
+            }
+            session.commit()
+
+    def listar_sugestoes(self, grupo_id: int, viajante_id: int) -> list[dict]:
+        with SessionLocal() as session:
+            grupo = self._buscar_grupo_do_organizador(session, grupo_id, viajante_id)
+            return list(reversed(self._sugestoes_itinerario(grupo)))
+
+    @staticmethod
+    def _sugestoes_itinerario(grupo: GrupoRecord) -> list[dict]:
+        sugestoes = grupo.sugestoes or {}
+        if not isinstance(sugestoes, dict):
+            raise ValueError("As sugestões do grupo estão inválidas.")
+        itinerarios = sugestoes.get("itinerario", [])
+        if not isinstance(itinerarios, list):
+            raise ValueError("As sugestões de itinerário estão inválidas.")
+        return itinerarios
+
+    @staticmethod
+    def _validar_reservas(
+        grupo: GrupoRecord, reservas: list[tuple[str, float, int]]
+    ) -> dict[int, str]:
+        if not reservas:
+            return {}
+
+        titulares = {integrante.id: integrante.nome for integrante in grupo.integrantes}
+        if grupo.organizador is not None:
+            titulares[grupo.organizador.id] = grupo.organizador.nome
+        for nome, preco, titular_id in reservas:
+            if not nome.strip():
+                raise ValueError("Informe o nome de todas as reservas.")
+            if not math.isfinite(preco) or preco < 0:
+                raise ValueError("Informe um preço válido para cada reserva.")
+            if titular_id not in titulares:
+                raise ValueError("O titular da reserva deve ser um participante do grupo.")
+        return titulares
             
     # UC14: Dividir custos da viagem entre membros do grupo (Implementado por Sarah Meireles)
     @staticmethod

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 
 from src.DAOs.ItinerarioDAO import ItinerarioDAO
 
@@ -50,16 +50,31 @@ class ItinerarioController:
         self, grupo_id: int, viajante_id: int, dados: dict
     ) -> None:
         data, cidade, passeio, reservas = self._normalizar_dia(dados)
-            
-        if data < date.today():
-            raise ValueError("A data escolhida não pode ser anterior à data de hoje!")
-
         self._itinerario_dao.adicionar_dia(
             grupo_id, viajante_id, data, cidade, passeio, reservas
         )
 
+    def sugerir_dia(self, grupo_id: int, viajante_id: int, dados: dict) -> None:
+        data, cidade, passeio, reservas = self._normalizar_dia(dados)
+        self._itinerario_dao.sugerir_dia(
+            grupo_id, viajante_id, data, cidade, passeio, reservas
+        )
+
+    def listar_sugestoes(self, grupo_id: int, viajante_id: int) -> list[dict]:
+        sugestoes = self._itinerario_dao.listar_sugestoes(grupo_id, viajante_id)
+        try:
+            return [
+                {
+                    **sugestao,
+                    "data": date.fromisoformat(sugestao["data"]).strftime("%d/%m/%Y"),
+                }
+                for sugestao in sugestoes
+            ]
+        except (KeyError, TypeError, ValueError) as erro:
+            raise ValueError("Há uma sugestão de itinerário com data inválida.") from erro
+
     def editar_dia(
-        self, grupo_id: int, data_original: str, dados: dict
+        self, grupo_id: int, viajante_id: int, data_original: str, dados: dict
     ) -> None:
         try:
             data_anterior = date.fromisoformat(data_original)
@@ -67,12 +82,9 @@ class ItinerarioController:
             raise ValueError("A data do dia selecionado está inválida.") from erro
 
         data, cidade, passeio, reservas = self._normalizar_dia(dados)
-
-        if data < date.today():
-            raise ValueError("A data escolhida não pode ser anterior à data de hoje!")
-        
         self._itinerario_dao.editar_dia(
             grupo_id,
+            viajante_id,
             data_anterior,
             data,
             cidade,
@@ -80,14 +92,14 @@ class ItinerarioController:
             reservas,
         )
 
-    def remover_dias(self, grupo_id: int, datas: list[str]) -> None:
+    def remover_dias(self, grupo_id: int, viajante_id: int, datas: list[str]) -> None:
         if not datas:
             raise ValueError("Selecione pelo menos um dia para remover.")
         try:
             dias = {date.fromisoformat(data) for data in datas}
         except ValueError as erro:
             raise ValueError("Uma das datas selecionadas está inválida.") from erro
-        self._itinerario_dao.remover_dias(grupo_id, dias)
+        self._itinerario_dao.remover_dias(grupo_id, viajante_id, dias)
 
     @staticmethod
     def _normalizar_dia(
@@ -139,6 +151,9 @@ class ItinerarioController:
             ):
                 raise ValueError("Os dados da reserva estão inválidos.")
             reservas_validadas.append((nome.strip(), float(preco), titular_id))
+
+        if data_viagem < date.today():
+            raise ValueError("A data escolhida não pode ser anterior à data de hoje!")
 
         return (
             data_viagem,

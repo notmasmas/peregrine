@@ -17,6 +17,7 @@ class ItinerarioView(tk.Frame):
         ao_editar: Callable[[str, dict], bool],
         ao_remover: Callable[[list[str]], bool],
         pode_adicionar: bool,
+        ao_abrir_sugestoes: Callable[[], None],
     ) -> None:
         super().__init__(master, padx=24, pady=24)
         self.pack(fill=tk.BOTH, expand=True)
@@ -50,7 +51,8 @@ class ItinerarioView(tk.Frame):
             width=3,
             command=self._alternar_modo_edicao,
         )
-        self._botao_editar_modo.grid(row=0, column=2, sticky=tk.E)
+        if self._pode_adicionar:
+            self._botao_editar_modo.grid(row=0, column=2, sticky=tk.E)
 
         tk.Label(
             self._tela_inicial,
@@ -97,12 +99,15 @@ class ItinerarioView(tk.Frame):
                 text="+ Adicionar ao itinerário",
                 command=self._mostrar_criacao,
             ).pack(side=tk.LEFT)
-        tk.Button(self._acoes_normais, text="Sugestões").pack(
-            side=tk.RIGHT if self._pode_adicionar else tk.LEFT,
-            fill=tk.X,
-            expand=True,
-            padx=(8, 0) if self._pode_adicionar else 0,
-        )
+            tk.Button(
+                self._acoes_normais, text="Sugestões", command=ao_abrir_sugestoes
+            ).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(8, 0))
+        else:
+            tk.Button(
+                self._acoes_normais,
+                text="Sugerir itinerário",
+                command=self._mostrar_criacao,
+            ).pack(side=tk.LEFT)
         self._acoes_edicao = tk.Frame(self._tela_inicial)
         self._acoes_edicao.grid(
             row=3, column=0, sticky="ew", pady=(12, 0)
@@ -345,7 +350,7 @@ class ItinerarioView(tk.Frame):
 
         tk.Button(
             self._tela_criacao,
-            text="Adicionar no Itinerário",
+            text="Adicionar no Itinerário" if self._pode_adicionar else "Enviar sugestão",
             command=self._enviar_criacao,
         ).grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self._adicionar_reserva()
@@ -453,6 +458,9 @@ class ItinerarioView(tk.Frame):
                 self._alternar_modo_edicao()
 
     def _adicionar_dia(self, dados: dict) -> bool:
+        if not self._pode_adicionar:
+            return self._ao_adicionar(dados)
+
         if self._data_original is None:
             sucesso = self._ao_adicionar(dados)
         else:
@@ -481,3 +489,6 @@ class ItinerarioView(tk.Frame):
 
     def mostrar_erro(self, mensagem: str) -> None:
         messagebox.showerror("Peregrine", mensagem, parent=self)
+
+    def mostrar_sucesso(self, mensagem: str) -> None:
+        messagebox.showinfo("Peregrine", mensagem, parent=self)
